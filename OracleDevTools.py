@@ -12,7 +12,7 @@
 import sys
 import os
 #sys.path.append(os.path.dirname(sys.executable))
-sys.path.append(os.path.join(os.path.dirname(__file__), "lib","cx_Oracle_64"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "lib","cx_Oracle"))
 sys.path.append(os.path.join(os.path.dirname(__file__), "lib","printtable"))
 import sublime
 import sublime_plugin
@@ -401,302 +401,301 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
             return
 
         selection = None
+        region = view.sel()[0]
+
+        if not region.empty():
+            selection = view.substr(region)
+
 
         if menu[index] == 'Open settings':
             self.view.window().open_file(os.path.join(sublime.packages_path(), "OracleDevTools", "OracleDevTools.sublime-settings"))
-        else:
-            region = view.sel()[0]
-
-            if not region.empty():
-                selection = view.substr(region)
-
-            if menu[index] == 'Find object':
-                if not currentSession.IsConnected():
-                    currentSession.ShowError(currentSession.oracleSessionError)
-                    return
-                if not selection:
-                    currentSession.ShowError('Необходимо выделить текст')
-                    return
-
-                sqlText = '''SELECT OBJECT_NAME, OBJECT_TYPE
-                              FROM ALL_OBJECTS
-                             WHERE     LOWER (OBJECT_NAME) LIKE LOWER ('%' || :obj_name || '%')
-                                   AND OWNER IN (USER, 'SYS')
-                           GROUP BY OBJECT_NAME, OBJECT_TYPE
-                           ORDER BY OBJECT_TYPE, OBJECT_NAME
-                          '''
-                result = currentSession.execute(sqlText, obj_name = selection)                         
-                foundedObjects = [] 
-
-                for row in result.fetchall():
-                    foundedObjects.append(list(row))
-
-                self.foundedObjects = foundedObjects
-                self.view.window().show_quick_panel(foundedObjects, self.on_find_object_done)   
+        elif menu[index] == 'Find object':
+            if not currentSession.IsConnected():
+                currentSession.ShowError(currentSession.oracleSessionError)
                 return
-            elif menu[index] == 'Reconnect':
-                currentSession.Reconnect()
-            elif menu[index] == 'Disconnect':
-                currentSession.Disconnect()
-            elif menu[index] == 'Describe':
-                if not currentSession.IsConnected():
-                    currentSession.ShowError(currentSession.oracleSessionError)
-                    return
-                if not selection:
-                    currentSession.ShowError('Необходимо выделить текст')
-                    return
-                output = ''
-                selection = currentSession.GetObjectName(selection)
+            if not selection:
+                currentSession.ShowError('Необходимо выделить текст')
+                return
 
-                sqlText = ''' SELECT OBJECT_TYPE, OWNER
-                                FROM ALL_OBJECTS
-                               WHERE LOWER (OBJECT_NAME) = LOWER (:obj_name) AND OWNER IN (USER, 'SYS')             
-                          '''
-                result = currentSession.execute(sqlText, obj_name = selection)                        
-                
-                object_type = result.fetchone()
-                if not object_type:
-                    currentSession.ShowError('Объект не найден')
-                    return
+            sqlText = '''SELECT OBJECT_NAME, OBJECT_TYPE
+                          FROM ALL_OBJECTS
+                         WHERE     LOWER (OBJECT_NAME) LIKE LOWER ('%' || :obj_name || '%')
+                               AND OWNER IN (USER, 'SYS')
+                       GROUP BY OBJECT_NAME, OBJECT_TYPE
+                       ORDER BY OBJECT_TYPE, OBJECT_NAME
+                      '''
+            result = currentSession.execute(sqlText, obj_name = selection)                         
+            foundedObjects = [] 
 
-                output  = 'OBJECT NAME :: ' + selection.upper() + '\n'
-                output += 'OBJECT TYPE :: ' + object_type[0]    + '\n\n'
+            for row in result.fetchall():
+                foundedObjects.append(list(row))
 
-                if object_type[0] == 'TABLE':
-                    output = output + 'COLUMNS :: \n'
-                    
-                    sqlText = ''' SELECT COLUMN_NAME "Column Name",
-                                         COLUMN_ID   "ID",
-                                         DATA_TYPE   "Data Type",
-                                         NULLABLE    "Nullable"
-                                    FROM ALL_TAB_COLUMNS
-                                   WHERE     LOWER(TABLE_NAME) = LOWER(:tablename)
-                                         AND OWNER = :tableowner
-                                 ORDER BY COLUMN_ID
-                              '''
-                    result = currentSession.execute(sqlText,tablename  = selection, 
-                                                            tableowner = object_type[1])
-                    output += currentSession.GetSqlResultAsText(result)
+            self.foundedObjects = foundedObjects
+            self.view.window().show_quick_panel(foundedObjects, self.on_find_object_done)   
+            return
+        elif menu[index] == 'Reconnect':
+            currentSession.Reconnect()
+        elif menu[index] == 'Disconnect':
+            currentSession.Disconnect()
+        elif menu[index] == 'Describe':
+            if not currentSession.IsConnected():
+                currentSession.ShowError(currentSession.oracleSessionError)
+                return
+            if not selection:
+                currentSession.ShowError('Необходимо выделить текст')
+                return
+            output = ''
+            selection = currentSession.GetObjectName(selection)
 
-                    output += 'INDEXES :: \n'
-                    
-                    sqlText = ''' SELECT IND_COLUMNS.INDEX_NAME      "Index Name",
-                                         INDEXES.UNIQUENESS          "Uniqueness",
-                                         INDEXES.DEGREE              "Degree",
-                                         IND_COLUMNS.COLUMN_NAME     "Column Name",
-                                         IND_COLUMNS.DESCEND         "Order",
-                                         IND_COLUMNS.COLUMN_POSITION "Position"
-                                    FROM ALL_IND_COLUMNS IND_COLUMNS, ALL_INDEXES INDEXES
-                                   WHERE     IND_COLUMNS.INDEX_NAME = INDEXES.INDEX_NAME
-                                         AND LOWER(INDEXES.TABLE_NAME) = LOWER(:tablename)
-                                         AND IND_COLUMNS.TABLE_OWNER = INDEXES.TABLE_OWNER
-                                         AND INDEXES.TABLE_OWNER = :tableowner
-                                 ORDER BY IND_COLUMNS.INDEX_NAME, IND_COLUMNS.COLUMN_POSITION
-                              ''' 
-                    result = currentSession.execute(sqlText,tablename  = selection,
-                                                            tableowner = object_type[1])
-                    output += currentSession.GetSqlResultAsText(result)
-
-                    output += 'CONSTRAINTS :: \n'
-                    
-                    sqlText = ''' SELECT CONSTRAINTS.CONSTRAINT_NAME   "Constraint Name",
-                                         CONS_COLUMNS.COLUMN_NAME      "Column Name",
-                                         CONSTRAINTS.CONSTRAINT_TYPE   "Constraint Type",
-                                         CONSTRAINTS.SEARCH_CONDITION  "Search Condition",
-                                         CONSTRAINTS.R_CONSTRAINT_NAME "Ref. Constraint Name",
-                                         CONSTRAINTS.STATUS            "Status",
-                                         CONSTRAINTS.DELETE_RULE       "Delete Rule",
-                                         CONSTRAINTS.DEFERRABLE        "Deferrable",
-                                         CONSTRAINTS.DEFERRED          "Deferred",
-                                         CONSTRAINTS.VALIDATED         "Validated",
-                                         CONSTRAINTS.BAD               "Bad",
-                                         CONSTRAINTS.RELY              "Rely"
-                                    FROM ALL_CONSTRAINTS CONSTRAINTS, ALL_CONS_COLUMNS CONS_COLUMNS
-                                    WHERE     LOWER(CONSTRAINTS.TABLE_NAME) = LOWER(:tablename)
-                                          AND CONSTRAINTS.CONSTRAINT_NAME = CONS_COLUMNS.CONSTRAINT_NAME
-                                          AND CONSTRAINTS.OWNER = CONS_COLUMNS.OWNER
-                                          AND CONSTRAINTS.OWNER = :tableowner
-                                  ORDER BY CONS_COLUMNS.POSITION
-                              '''
-                    result = currentSession.execute(sqlText,tablename  = selection,
-                                                            tableowner = object_type[1])
-                    output += currentSession.GetSqlResultAsText(result)
-
-                    output += 'TRIGGERS :: \n'
-                    
-                    sqlText = ''' SELECT TRIGGER_NAME      "Trigger Name",
-                                         TRIGGER_TYPE      "Trigger Type",
-                                         STATUS            "Status",
-                                         TRIGGERING_EVENT  "Triggering Event",
-                                         WHEN_CLAUSE       "When Clause"
-                                    FROM ALL_TRIGGERS
-                                   WHERE     LOWER(TABLE_NAME) = LOWER(:tablename)
-                                         AND TABLE_OWNER = :tableowner
-                              '''   
-                    result = currentSession.execute(sqlText,tablename  = selection,
-                                                            tableowner = object_type[1])
-                    output += currentSession.GetSqlResultAsText(result)
-                
-                elif object_type[0] == 'VIEW':
-                    output += 'COLUMNS :: \n'
-                    
-                    sqlText = ''' SELECT COLUMN_NAME "Column Name",
-                                         COLUMN_ID   "ID",
-                                         DATA_TYPE   "Data Type",
-                                         NULLABLE    "Nullable"
-                                    FROM ALL_TAB_COLUMNS
-                                   WHERE     LOWER(TABLE_NAME) = LOWER(:view_name)
-                                         AND OWNER = :view_owner
-                                 ORDER BY COLUMN_ID
-                              '''
-                    result = currentSession.execute(sqlText,view_name  = selection, 
-                                                            view_owner = object_type[1])
-                    output += currentSession.GetSqlResultAsText(result)
-                    output += 'DDL :: \n'
-                    output += currentSession.GetObjectDDL(selection, 'VIEW', object_type[1])
-
-                elif object_type[0] == 'TRIGGER':               
-                    output += 'DESCRIPTION :: \n'
-                    output += currentSession.GetObjectDescr(selection, 'TRIGGER', object_type[1])
-
-                    sqlText = ''' SELECT TRIGGER_NAME,
-                                         TRIGGER_TYPE,
-                                         TABLE_NAME,
-                                         STATUS,
-                                         TRIGGERING_EVENT,
-                                         WHEN_CLAUSE
-                                    FROM USER_TRIGGERS
-                                   WHERE LOWER(TRIGGER_NAME) = LOWER(:triggername)
-                              '''
-                    result = currentSession.execute(sqlText,triggername = selection)
-                    output += currentSession.GetSqlResultAsText(result)
-
-                    output += 'ERRORS :: \n'
-                    output += currentSession.GetObjectErrors(selection, 'TRIGGER', object_type[1])
-                    output += 'DDL :: \n'
-                    output += currentSession.GetObjectDDL(selection, 'TRIGGER', object_type[1])
-
-                elif object_type[0] == 'PACKAGE' or object_type[0] == 'PACKAGE BODY':                   
-                    output += 'DESCRIPTION :: \n'
-                    output += currentSession.GetObjectDescr (selection, 'PACKAGE',      object_type[1])
-                    output += currentSession.GetObjectDescr (selection, 'PACKAGE BODY', object_type[1])
-                    output += currentSession.GetObjectArguments(selection, 'PACKAGE', object_type[1])
-                    output += 'ERRORS :: \n'
-                    output += currentSession.GetObjectErrors(selection, 'PACKAGE',      object_type[1])
-                    output += currentSession.GetObjectErrors(selection, 'PACKAGE BODY', object_type[1])
-                    output += 'DDL :: \n'
-                    output += currentSession.GetObjectDDL(selection, 'PACKAGE', object_type[1])
-
-                elif object_type[0] == 'FUNCTION':
-                    output += 'DESCRIPTION :: \n'
-                    output += currentSession.GetObjectDescr (selection, 'FUNCTION', object_type[1])
-                    output += 'ERRORS :: \n'
-                    output += currentSession.GetObjectErrors(selection, 'FUNCTION', object_type[1])
-                    output += 'DDL :: \n'
-                    output += currentSession.GetObjectDDL(selection, 'FUNCTION', object_type[1])
-                elif object_type[0] == 'PROCEDURE':
-                    output += 'DESCRIPTION :: \n'
-                    output += currentSession.GetObjectDescr (selection, 'PROCEDURE', object_type[1])
-                    output += 'ERRORS :: \n'
-                    output += currentSession.GetObjectErrors(selection, 'PROCEDURE', object_type[1])
-                    output += 'DDL :: \n'
-                    output += currentSession.GetObjectDDL(selection, 'PROCEDURE', object_type[1])
-                elif object_type[0] == 'INDEX':
-                    output += 'DESCRIPTION :: \n'
-                    output += currentSession.GetObjectDescr (selection, 'INDEX', object_type[1])
-                    sqlText = ''' SELECT IND_COLUMNS.COLUMN_NAME     "Column Name",
-                                         INDEXES.UNIQUENESS          "Uniqueness",
-                                         INDEXES.DEGREE              "Degree",                                           
-                                         IND_COLUMNS.DESCEND         "Order",
-                                         IND_COLUMNS.COLUMN_POSITION "Position"
-                                    FROM ALL_IND_COLUMNS IND_COLUMNS, ALL_INDEXES INDEXES
-                                   WHERE     IND_COLUMNS.INDEX_NAME = INDEXES.INDEX_NAME
-                                         AND LOWER(INDEXES.INDEX_NAME) = LOWER(:indexname)
-                                         AND IND_COLUMNS.TABLE_OWNER = INDEXES.TABLE_OWNER
-                                         AND INDEXES.TABLE_OWNER = :indexowner
-                                 ORDER BY IND_COLUMNS.INDEX_NAME, IND_COLUMNS.COLUMN_POSITION
-                              ''' 
-                    result = currentSession.execute(sqlText,indexname  = selection,
-                                                            indexowner = object_type[1])
-                    output += currentSession.GetSqlResultAsText(result)
-                    output += 'DDL :: \n'
-                    output += currentSession.GetObjectDDL(selection, 'INDEX', object_type[1])
-                else:
-                    output += 'DESCRIPTION :: \n'
-                    output += currentSession.GetObjectDescr (selection, object_type[0], object_type[1])
-                    output += 'DDL :: \n'
-                    output += currentSession.GetObjectDDL(selection, object_type[0], object_type[1])
-
-                if output:
-                    currentSession.OutputResult(view,self.edit,output,selection)
-
-            elif menu[index] == 'Extract CLOB from SELECT':
-                if not currentSession.IsConnected():
-                    currentSession.ShowError(currentSession.oracleSessionError)
-                    return
-                if not selection:
-                    currentSession.ShowError('Необходимо выделить текст')
-                    return
-                try:
-                    result = currentSession.execute(selection)
-                except cx_Oracle.Error, e:
-                    currentSession.ShowError(str(e))
-                else:
-                    if result:
-                        output = ''
-
-                        # Почему-то если извлекать больше 50 строк, то возникает ошибка:
-                        # cx_Oracle.ProgrammingError: LOB variable no longer valid after subsequent fetch
-                        for index_j, row in enumerate(result.fetchmany(currentSession.maxRows if currentSession.maxRows <= 50 else 50)):
-                            for index_i, value in enumerate(row):
-                                if type(value) is cx_Oracle.LOB:
-                                    output += result.description[index_i][0] + ' :: ROWNUM :: ' + str(index_j) + '\n'
-                                    output += '-'*len(result.description[index_i][0])               + '\n'
-                                    output += value.read().decode(currentSession.encoding)          + '\n'
-                                    output += '-'*len(value.read().decode(currentSession.encoding)) + '\n\n'
-                    if output:
-                        currentSession.OutputResult(view,self.edit,output,'Extract LOB')
-                    else:
-                        currentSession.ShowError('No Clob')
+            sqlText = ''' SELECT OBJECT_TYPE, OWNER
+                            FROM ALL_OBJECTS
+                           WHERE LOWER (OBJECT_NAME) = LOWER (:obj_name) AND OWNER IN (USER, 'SYS')             
+                      '''
+            result = currentSession.execute(sqlText, obj_name = selection)                        
             
-            # TODO: dbms_metadata.get_ddl
-            elif menu[index] == 'Get script for object':
-                if not currentSession.IsConnected():
-                    currentSession.ShowError(currentSession.oracleSessionError)
-                    return
-                object_type = currentSession.GetObjectType(selection)
-                print(object_type)
-                pass
+            object_type = result.fetchone()
+            if not object_type:
+                currentSession.ShowError('Объект не найден')
+                return
 
-            elif menu[index] == 'Explain Plan':
-                if not currentSession.IsConnected():
-                    currentSession.ShowError(currentSession.oracleSessionError)
-                    return
-                if not selection:
-                    currentSession.ShowError('Необходимо выделить запрос')
-                    return
+            output  = 'OBJECT NAME :: ' + selection.upper() + '\n'
+            output += 'OBJECT TYPE :: ' + object_type[0]    + '\n\n'
+
+            if object_type[0] == 'TABLE':
+                output = output + 'COLUMNS :: \n'
                 
-                sqlText = 'EXPLAIN PLAN FOR ' + selection
-                try:
-                    result = currentSession.execute(sqlText)
-                except cx_Oracle.Error, e:
-                    currentSession.ShowError(str(e))                
-                    return
+                sqlText = ''' SELECT COLUMN_NAME "Column Name",
+                                     COLUMN_ID   "ID",
+                                     DATA_TYPE   "Data Type",
+                                     NULLABLE    "Nullable"
+                                FROM ALL_TAB_COLUMNS
+                               WHERE     LOWER(TABLE_NAME) = LOWER(:tablename)
+                                     AND OWNER = :tableowner
+                             ORDER BY COLUMN_ID
+                          '''
+                result = currentSession.execute(sqlText,tablename  = selection, 
+                                                        tableowner = object_type[1])
+                output += currentSession.GetSqlResultAsText(result)
+
+                output += 'INDEXES :: \n'
                 
-                sqlText = 'SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY(FORMAT=>\'ALL\'))'
-                try:
-                    result = currentSession.execute(sqlText)
-                except cx_Oracle.Error, e:
-                    currentSession.ShowError(str(e))                
-                    return
+                sqlText = ''' SELECT IND_COLUMNS.INDEX_NAME      "Index Name",
+                                     INDEXES.UNIQUENESS          "Uniqueness",
+                                     INDEXES.DEGREE              "Degree",
+                                     IND_COLUMNS.COLUMN_NAME     "Column Name",
+                                     IND_COLUMNS.DESCEND         "Order",
+                                     IND_COLUMNS.COLUMN_POSITION "Position"
+                                FROM ALL_IND_COLUMNS IND_COLUMNS, ALL_INDEXES INDEXES
+                               WHERE     IND_COLUMNS.INDEX_NAME = INDEXES.INDEX_NAME
+                                     AND LOWER(INDEXES.TABLE_NAME) = LOWER(:tablename)
+                                     AND IND_COLUMNS.TABLE_OWNER = INDEXES.TABLE_OWNER
+                                     AND INDEXES.TABLE_OWNER = :tableowner
+                             ORDER BY IND_COLUMNS.INDEX_NAME, IND_COLUMNS.COLUMN_POSITION
+                          ''' 
+                result = currentSession.execute(sqlText,tablename  = selection,
+                                                        tableowner = object_type[1])
+                output += currentSession.GetSqlResultAsText(result)
 
-                output  = 'STATEMENT ::  \n'
-                output += selection + '\n\n'                    
-                output += 'PLAN ::       \n'
-                for row in result.fetchall():
-                    output += row[0] + '\n'
+                output += 'CONSTRAINTS :: \n'
+                
+                sqlText = ''' SELECT CONSTRAINTS.CONSTRAINT_NAME   "Constraint Name",
+                                     CONS_COLUMNS.COLUMN_NAME      "Column Name",
+                                     CONSTRAINTS.CONSTRAINT_TYPE   "Constraint Type",
+                                     CONSTRAINTS.SEARCH_CONDITION  "Search Condition",
+                                     CONSTRAINTS.R_CONSTRAINT_NAME "Ref. Constraint Name",
+                                     CONSTRAINTS.STATUS            "Status",
+                                     CONSTRAINTS.DELETE_RULE       "Delete Rule",
+                                     CONSTRAINTS.DEFERRABLE        "Deferrable",
+                                     CONSTRAINTS.DEFERRED          "Deferred",
+                                     CONSTRAINTS.VALIDATED         "Validated",
+                                     CONSTRAINTS.BAD               "Bad",
+                                     CONSTRAINTS.RELY              "Rely"
+                                FROM ALL_CONSTRAINTS CONSTRAINTS, ALL_CONS_COLUMNS CONS_COLUMNS
+                                WHERE     LOWER(CONSTRAINTS.TABLE_NAME) = LOWER(:tablename)
+                                      AND CONSTRAINTS.CONSTRAINT_NAME = CONS_COLUMNS.CONSTRAINT_NAME
+                                      AND CONSTRAINTS.OWNER = CONS_COLUMNS.OWNER
+                                      AND CONSTRAINTS.OWNER = :tableowner
+                              ORDER BY CONS_COLUMNS.POSITION
+                          '''
+                result = currentSession.execute(sqlText,tablename  = selection,
+                                                        tableowner = object_type[1])
+                output += currentSession.GetSqlResultAsText(result)
 
-                currentSession.OutputResult(view,self.edit,output,'EXPLAIN PLAN')                    
+                output += 'TRIGGERS :: \n'
+                
+                sqlText = ''' SELECT TRIGGER_NAME      "Trigger Name",
+                                     TRIGGER_TYPE      "Trigger Type",
+                                     STATUS            "Status",
+                                     TRIGGERING_EVENT  "Triggering Event",
+                                     WHEN_CLAUSE       "When Clause"
+                                FROM ALL_TRIGGERS
+                               WHERE     LOWER(TABLE_NAME) = LOWER(:tablename)
+                                     AND TABLE_OWNER = :tableowner
+                          '''   
+                result = currentSession.execute(sqlText,tablename  = selection,
+                                                        tableowner = object_type[1])
+                output += currentSession.GetSqlResultAsText(result)
+            
+            elif object_type[0] == 'VIEW':
+                output += 'COLUMNS :: \n'
+                
+                sqlText = ''' SELECT COLUMN_NAME "Column Name",
+                                     COLUMN_ID   "ID",
+                                     DATA_TYPE   "Data Type",
+                                     NULLABLE    "Nullable"
+                                FROM ALL_TAB_COLUMNS
+                               WHERE     LOWER(TABLE_NAME) = LOWER(:view_name)
+                                     AND OWNER = :view_owner
+                             ORDER BY COLUMN_ID
+                          '''
+                result = currentSession.execute(sqlText,view_name  = selection, 
+                                                        view_owner = object_type[1])
+                output += currentSession.GetSqlResultAsText(result)
+                output += 'DDL :: \n'
+                output += currentSession.GetObjectDDL(selection, 'VIEW', object_type[1])
+
+            elif object_type[0] == 'TRIGGER':               
+                output += 'DESCRIPTION :: \n'
+                output += currentSession.GetObjectDescr(selection, 'TRIGGER', object_type[1])
+
+                sqlText = ''' SELECT TRIGGER_NAME,
+                                     TRIGGER_TYPE,
+                                     TABLE_NAME,
+                                     STATUS,
+                                     TRIGGERING_EVENT,
+                                     WHEN_CLAUSE
+                                FROM USER_TRIGGERS
+                               WHERE LOWER(TRIGGER_NAME) = LOWER(:triggername)
+                          '''
+                result = currentSession.execute(sqlText,triggername = selection)
+                output += currentSession.GetSqlResultAsText(result)
+
+                output += 'ERRORS :: \n'
+                output += currentSession.GetObjectErrors(selection, 'TRIGGER', object_type[1])
+                output += 'DDL :: \n'
+                output += currentSession.GetObjectDDL(selection, 'TRIGGER', object_type[1])
+
+            elif object_type[0] == 'PACKAGE' or object_type[0] == 'PACKAGE BODY':                   
+                output += 'DESCRIPTION :: \n'
+                output += currentSession.GetObjectDescr (selection, 'PACKAGE',      object_type[1])
+                output += currentSession.GetObjectDescr (selection, 'PACKAGE BODY', object_type[1])
+                output += currentSession.GetObjectArguments(selection, 'PACKAGE', object_type[1])
+                output += 'ERRORS :: \n'
+                output += currentSession.GetObjectErrors(selection, 'PACKAGE',      object_type[1])
+                output += currentSession.GetObjectErrors(selection, 'PACKAGE BODY', object_type[1])
+                output += 'DDL :: \n'
+                output += currentSession.GetObjectDDL(selection, 'PACKAGE', object_type[1])
+
+            elif object_type[0] == 'FUNCTION':
+                output += 'DESCRIPTION :: \n'
+                output += currentSession.GetObjectDescr (selection, 'FUNCTION', object_type[1])
+                output += 'ERRORS :: \n'
+                output += currentSession.GetObjectErrors(selection, 'FUNCTION', object_type[1])
+                output += 'DDL :: \n'
+                output += currentSession.GetObjectDDL(selection, 'FUNCTION', object_type[1])
+            elif object_type[0] == 'PROCEDURE':
+                output += 'DESCRIPTION :: \n'
+                output += currentSession.GetObjectDescr (selection, 'PROCEDURE', object_type[1])
+                output += 'ERRORS :: \n'
+                output += currentSession.GetObjectErrors(selection, 'PROCEDURE', object_type[1])
+                output += 'DDL :: \n'
+                output += currentSession.GetObjectDDL(selection, 'PROCEDURE', object_type[1])
+            elif object_type[0] == 'INDEX':
+                output += 'DESCRIPTION :: \n'
+                output += currentSession.GetObjectDescr (selection, 'INDEX', object_type[1])
+                sqlText = ''' SELECT IND_COLUMNS.COLUMN_NAME     "Column Name",
+                                     INDEXES.UNIQUENESS          "Uniqueness",
+                                     INDEXES.DEGREE              "Degree",                                           
+                                     IND_COLUMNS.DESCEND         "Order",
+                                     IND_COLUMNS.COLUMN_POSITION "Position"
+                                FROM ALL_IND_COLUMNS IND_COLUMNS, ALL_INDEXES INDEXES
+                               WHERE     IND_COLUMNS.INDEX_NAME = INDEXES.INDEX_NAME
+                                     AND LOWER(INDEXES.INDEX_NAME) = LOWER(:indexname)
+                                     AND IND_COLUMNS.TABLE_OWNER = INDEXES.TABLE_OWNER
+                                     AND INDEXES.TABLE_OWNER = :indexowner
+                             ORDER BY IND_COLUMNS.INDEX_NAME, IND_COLUMNS.COLUMN_POSITION
+                          ''' 
+                result = currentSession.execute(sqlText,indexname  = selection,
+                                                        indexowner = object_type[1])
+                output += currentSession.GetSqlResultAsText(result)
+                output += 'DDL :: \n'
+                output += currentSession.GetObjectDDL(selection, 'INDEX', object_type[1])
+            else:
+                output += 'DESCRIPTION :: \n'
+                output += currentSession.GetObjectDescr (selection, object_type[0], object_type[1])
+                output += 'DDL :: \n'
+                output += currentSession.GetObjectDDL(selection, object_type[0], object_type[1])
+
+            if output:
+                currentSession.OutputResult(view,self.edit,output,selection)
+
+        elif menu[index] == 'Extract CLOB from SELECT':
+            if not currentSession.IsConnected():
+                currentSession.ShowError(currentSession.oracleSessionError)
+                return
+            if not selection:
+                currentSession.ShowError('Необходимо выделить текст')
+                return
+            try:
+                result = currentSession.execute(selection)
+            except cx_Oracle.Error, e:
+                currentSession.ShowError(str(e))
+            else:
+                if result:
+                    output = ''
+
+                    # Почему-то если извлекать больше 50 строк, то возникает ошибка:
+                    # cx_Oracle.ProgrammingError: LOB variable no longer valid after subsequent fetch
+                    for index_j, row in enumerate(result.fetchmany(currentSession.maxRows if currentSession.maxRows <= 50 else 50)):
+                        for index_i, value in enumerate(row):
+                            if type(value) is cx_Oracle.LOB:
+                                output += result.description[index_i][0] + ' :: ROWNUM :: ' + str(index_j) + '\n'
+                                output += '-'*len(result.description[index_i][0])               + '\n'
+                                output += value.read().decode(currentSession.encoding)          + '\n'
+                                output += '-'*len(value.read().decode(currentSession.encoding)) + '\n\n'
+                if output:
+                    currentSession.OutputResult(view,self.edit,output,'Extract LOB')
+                else:
+                    currentSession.ShowError('No Clob')
+        
+        # TODO: dbms_metadata.get_ddl
+        elif menu[index] == 'Get script for object':
+            if not currentSession.IsConnected():
+                currentSession.ShowError(currentSession.oracleSessionError)
+                return
+            object_type = currentSession.GetObjectType(selection)
+            print(object_type)
+            pass
+
+        elif menu[index] == 'Explain Plan':
+            if not currentSession.IsConnected():
+                currentSession.ShowError(currentSession.oracleSessionError)
+                return
+            if not selection:
+                currentSession.ShowError('Необходимо выделить запрос')
+                return
+            
+            sqlText = 'EXPLAIN PLAN FOR ' + selection
+            try:
+                result = currentSession.execute(sqlText)
+            except cx_Oracle.Error, e:
+                currentSession.ShowError(str(e))                
+                return
+            
+            sqlText = 'SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY(FORMAT=>\'ALL\'))'
+            try:
+                result = currentSession.execute(sqlText)
+            except cx_Oracle.Error, e:
+                currentSession.ShowError(str(e))                
+                return
+
+            output  = 'STATEMENT ::  \n'
+            output += selection + '\n\n'                    
+            output += 'PLAN ::       \n'
+            for row in result.fetchall():
+                output += row[0] + '\n'
+
+            currentSession.OutputResult(view,self.edit,output,'EXPLAIN PLAN')                    
 
     def on_find_object_done(self, index):
         if index == -1:
