@@ -325,30 +325,45 @@ class ScriptParser:
             return False
 
     def __GetLastLexem(self):
-            self.__DecPosition()
-            self.__currentLexem = self.__lexemList[self.__currentPosition-1]
-    
+        self.__DecPosition()
+        self.__currentLexem = self.__lexemList[self.__currentPosition-1]
+
+    def __OffsetPosition(self,offset=0):
+        self.__currentPosition = self.__currentPosition + offset
+        self.__currentLexem = self.__lexemList[self.__currentPosition - 1]
+
+    def __SetError(self,errCode,errText):
+        self.__splitStatementError['ErrorCode'] = errCode
+        self.__splitStatementError['ErrorText'] = errText
+
+    def __AppendCurrentLexem(self,lexem=None,lexemType=None,lexemLength=None):
+        Lexem = self.__GetStatementLexemRow()
+        
+        Lexem['Lexem']  = lexem       if lexem       else self.__currentLexem['Lexem']
+        Lexem['Length'] = lexemLength if lexemLength else self.__currentLexem['Length']
+        Lexem['Type']   = lexemType   if lexemType   else 'LEXEM'
+
+        self.__currentStatement.append(Lexem)
+
     # "--"─────>"\n"
     def __GetOneLineCommentStatement(self):
         oneLineComment = ''
-        Lexem = self.__GetStatementLexemRow()
 
         while self.__GetNextLexem():
             oneLineComment += self.__currentLexem['Lexem']
-            if self.__currentLexem['Lexem'] == self.__otherSymbols['NEWLINE CHARACTER']:
+            
+            if self.__IsNewLineLexem():
                 break
-        Lexem['Lexem'] = oneLineComment
-        Lexem['Type'] = 'COMMENT'
-        Lexem['Length'] = len(oneLineComment)
 
-        return Lexem
+        self.__AppendCurrentLexem(lexem=oneLineComment,
+                                  lexemType='COMMENT',
+                                  lexemLength=len(oneLineComment))
 
     # "/*"──┐    
     #       └──>"*/"
     def __GetMultyLineCommentStatement(self):
         multyLineComment = ''
         closeCommentLexem = ''
-        Lexem = self.__GetStatementLexemRow()
 
         while self.__GetNextLexem():
 
@@ -358,10 +373,8 @@ class ScriptParser:
                 if self.__GetNextLexem():
                     closeCommentLexem += self.__currentLexem['Lexem']
                 else:
-                    #error
-                    self.__splitStatementError['ErrorCode'] = 1
-                    self.__splitStatementError['ErrorText'] = 'unexpected end of block'
-                    return self.__GetStatementLexemRow()                   
+                    self.__SetError(1,'unexpected end of block')
+                    return
 
                 if closeCommentLexem == self.__compoundSymbols['MULTI-LINE COMMENT DELIMITER (END)']:
                     break
@@ -370,80 +383,68 @@ class ScriptParser:
 
             multyLineComment += self.__currentLexem['Lexem']
 
-        Lexem['Lexem'] = multyLineComment + closeCommentLexem
-        Lexem['Type'] = 'MULTYLINE COMMENT'
-        Lexem['Length'] = len(multyLineComment + closeCommentLexem)
-        return Lexem
+        self.__AppendCurrentLexem(lexem=multyLineComment + closeCommentLexem,
+                                  lexemType='MULTYLINE COMMENT',
+                                  lexemLength=len(multyLineComment + closeCommentLexem))
 
     # "'"──┐
     #      └──["''"]──┐
-    #                 └──"'"  
+    #                 └──>"'"  
     def __GetStringLexem(self):
         string = ''
-        Lexem = self.__GetStatementLexemRow()
         
         if not self.__GetNextLexem():
-            self.__splitStatementError['ErrorCode'] = 3
-            self.__splitStatementError['ErrorText'] = 'unexpected end of block'        
-            return self.__GetStatementLexemRow()
+            self.__SetError(3,'unexpected end of block')
+            return
 
-        if not self.__currentLexem['Description'].upper() == 'CHARACTER STRING DELIMITER':
-            self.__splitStatementError['ErrorCode'] = 3
-            self.__splitStatementError['ErrorText'] = 'not string lexem'        
-            return self.__GetStatementLexemRow()
+        if not self.__IsApostropheLexem():
+            self.__SetError(3,'not string lexem')
+            return
 
         string += self.__currentLexem['Lexem']            
         
         while self.__GetNextLexem():
-            if self.__currentLexem['Description'].upper() == 'CHARACTER STRING DELIMITER':
+            if self.__IsApostropheLexem():
                 string += self.__currentLexem['Lexem']
 
                 if not self.__GetNextLexem():
-                    #error
-                    self.__splitStatementError['ErrorCode'] = 3
-                    self.__splitStatementError['ErrorText'] = 'unexpected end of block'
-                    return self.__GetStatementLexemRow()                
+                    self.__SetError(3,'unexpected end of block')
+                    return
                 
-                if not self.__currentLexem['Description'].upper() == 'CHARACTER STRING DELIMITER':
+                if not self.__IsApostropheLexem():
                     self.__GetLastLexem()
                     break
 
             string += self.__currentLexem['Lexem']
         
-        Lexem['Lexem'] = string
-        Lexem['Type'] = 'STRING'
-        Lexem['Length'] = len(string)
+        self.__AppendCurrentLexem(lexem=string,
+                                  lexemType='STRING',
+                                  lexemLength=len(string))
         
-        return Lexem
 
     # '"'─────>'"' 
     def __GetQuotedIdentifierLexem(self):
         quotedIdentifier = ''
-        Lexem = self.__GetStatementLexemRow()
 
         if not self.__GetNextLexem():
-            self.__splitStatementError['ErrorCode'] = 4
-            self.__splitStatementError['ErrorText'] = 'unexpected end of block'        
-            return self.__GetStatementLexemRow()
+            self.__SetError(4,'unexpected end of block')
+            return
 
-        if not self.__currentLexem['Description'].upper() == 'QUOTED IDENTIFIER DELIMITER':
-            self.__splitStatementError['ErrorCode'] = 4
-            self.__splitStatementError['ErrorText'] = 'not quoted identifier lexem'        
-            return self.__GetStatementLexemRow()
+        if not self.__IsQuoteLexem():
+            self.__SetError(4,'not quoted identifier lexem')
+            return
 
         quotedIdentifier += self.__currentLexem['Lexem']
         
         while self.__GetNextLexem():
             quotedIdentifier += self.__currentLexem['Lexem']
 
-            if self.__currentLexem['Description'].upper() == 'QUOTED IDENTIFIER DELIMITER':
+            if self.__IsQuoteLexem():
                 break
 
-        Lexem['Lexem'] = quotedIdentifier
-        Lexem['Type'] = 'QUOTED IDENTIFIER'
-        Lexem['Length'] = len(quotedIdentifier)
-        
-        return Lexem
+        self.__AppendCurrentLexem(lexem=quotedIdentifier,
+                                  lexemType='QUOTED IDENTIFIER',
+                                  lexemLength=len(quotedIdentifier))
 
     # "--"    
     def __IsOneLineComment(self):
@@ -452,9 +453,7 @@ class ScriptParser:
         if self.__GetNextLexem():
             openCommentLexem += self.__currentLexem['Lexem']
         else:
-            #error
-            self.__splitStatementError['ErrorCode'] = 1
-            self.__splitStatementError['ErrorText'] = 'unexpected end of block'
+            self.__SetError(1,'unexpected end of block')
             return
 
         self.__GetLastLexem()
@@ -471,9 +470,7 @@ class ScriptParser:
         if self.__GetNextLexem():
             openCommentLexem += self.__currentLexem['Lexem']
         else:
-            #error
-            self.__splitStatementError['ErrorCode'] = 1
-            self.__splitStatementError['ErrorText'] = 'unexpected end of block'
+            self.__SetError(1,'unexpected end of block')
             return
 
         self.__GetLastLexem()
@@ -487,9 +484,8 @@ class ScriptParser:
     #         └──";"<──┐    
     #                  └──"/"
     def __IsEndOfPlSqlBlock(self):
-        if not self.__currentLexem['Description'].upper() == 'DIVISION OPERATOR':
-            self.__splitStatementError['ErrorCode'] = 2
-            self.__splitStatementError['ErrorText'] = 'not division operator'
+        if not self.__IsDivisionLexem():
+            self.__SetError(2,'not division operator')
             return False
         
         deepBackPosition = 0
@@ -497,10 +493,9 @@ class ScriptParser:
         while True:
             self.__GetLastLexem()
             deepBackPosition += 1
-            if not self.__currentLexem['Description'] in ['SPACE','NEWLINE CHARACTER']:
-                if not self.__currentLexem['Lexem'] == self.__simpleSymbols['STATEMENT TERMINATOR']:
-                    self.__currentPosition = self.__currentPosition + deepBackPosition
-                    self.__currentLexem = self.__lexemList[self.__currentPosition - 1]
+            if not self.__IsIgnoreLexem():
+                if not self.__IsStatementTerminatorLexem():
+                    self.__OffsetPosition(deepBackPosition)
                     return False
                 else:
                     break
@@ -509,149 +504,151 @@ class ScriptParser:
         while True:
             self.__GetLastLexem()
             deepBackPosition += 1
-            if not self.__currentLexem['Description'] in ['SPACE','NEWLINE CHARACTER']:
+            if not self.__IsIgnoreLexem():
                 if not self.__currentLexem['Lexem'].upper() == 'END':
-                    self.__currentPosition = self.__currentPosition + deepBackPosition
-                    self.__currentLexem = self.__lexemList[self.__currentPosition - 1]
+                    self.__OffsetPosition(deepBackPosition)
                     return False
                 else:
-                    self.__currentPosition = self.__currentPosition + deepBackPosition
-                    self.__currentLexem = self.__lexemList[self.__currentPosition - 1]
+                    self.__OffsetPosition(deepBackPosition)
                     return True                    
         
         return False
 
+    def __IsSpaceLexem(self):
+        return self.__currentLexem['Description'].upper() == 'SPACE'    
+
+    def __IsNewLineLexem(self):
+        return self.__currentLexem['Description'].upper() == 'NEWLINE CHARACTER'
+
+    def __IsIgnoreLexem(self):
+        return self.__currentLexem['Description'].upper() in ['SPACE','NEWLINE CHARACTER']
+
+    def __IsSubtractionLexem(self):
+        return self.__currentLexem['Description'].upper() == 'SUBTRACTION/NEGATION OPERATOR'
+    
+    def __IsDivisionLexem(self):
+        return self.__currentLexem['Description'].upper() == 'DIVISION OPERATOR'
+    
+    def __IsApostropheLexem(self):
+        return self.__currentLexem['Description'].upper() == 'CHARACTER STRING DELIMITER'
+    
+    def __IsQuoteLexem(self):
+        return self.__currentLexem['Description'].upper() == 'QUOTED IDENTIFIER DELIMITER'
+    
+    def __IsStatementTerminatorLexem(self):
+        return self.__currentLexem['Description'].upper() == 'STATEMENT TERMINATOR'
+
+    def __IsCreateLexem(self):
+        return self.__currentLexem['Lexem'].upper() == 'CREATE'
+
+    def __IsDeclareLexem(self):
+        return self.__currentLexem['Lexem'].upper() == 'DECLARE'
+
+    def __IsENDLexem(self):
+        return self.__currentLexem['Lexem'].upper() == 'END'
+    
     def __GetPlSqlBlock(self):
         self.__currentStatement = []
+
         while self.__GetNextLexem():
-            Lexem = self.__GetStatementLexemRow()
-            
             # SPACE
-            if self.__currentLexem['Description'].upper() == 'SPACE':
-                Lexem['Lexem'] = ' '
-                Lexem['Length'] = 1
-                Lexem['Type'] = 'SPACE'
+            if self.__IsSpaceLexem():
+                self.__AppendCurrentLexem(lexem=' ',lexemType='SPACE',lexemLength=1)
             
             # SUBTRACTION/NEGATION OPERATOR
             #  ├ ONELINE COMMENT
             #  └ SUBTRACTION/NEGATION OPERATOR
-            elif self.__currentLexem['Description'].upper() == 'SUBTRACTION/NEGATION OPERATOR':                
+            elif self.__IsSubtractionLexem():                
                 if self.__IsOneLineComment():
-                    self.__DecPosition()
-                    Lexem = self.__GetOneLineCommentStatement()
+                    self.__GetLastLexem()
+                    self.__GetOneLineCommentStatement()
                 else:
-                    Lexem['Lexem'] = self.__currentLexem['Lexem']
-                    Lexem['Length'] = self.__currentLexem['Length']
-                    Lexem['Type'] = 'SUBTRACTION/NEGATION OPERATOR'                    
+                    self.__AppendCurrentLexem(lexemType='SUBTRACTION/NEGATION OPERATOR')
             
             # DIVISION OPERATOR
             #  ├ END OF PLSQL STATEMENT
             #  ├ MULTYLINE COMMENT
             #  └ DIVISION OPERATOR
-            elif self.__currentLexem['Description'].upper() == 'DIVISION OPERATOR':
+            elif self.__IsDivisionLexem():
                 if self.__IsEndOfPlSqlBlock():
-                    Lexem['Lexem'] = self.__currentLexem['Lexem']
-                    Lexem['Length'] = self.__currentLexem['Length']
-                    Lexem['Type'] = 'END PLSQL STATEMENT'
-                    self.__currentStatement.append(Lexem)
+                    self.__AppendCurrentLexem(lexemType='END PLSQL STATEMENT')
                     break
                 elif self.__IsMultyLineComment():
-                    self.__DecPosition()
-                    Lexem = self.__GetMultyLineCommentStatement()
+                    self.__GetLastLexem()
+                    self.__GetMultyLineCommentStatement()
                 else:                
-                    Lexem['Lexem'] = self.__currentLexem['Lexem']
-                    Lexem['Length'] = self.__currentLexem['Length']
-                    Lexem['Type'] = 'DIVISION OPERATOR'
-            
+                    self.__AppendCurrentLexem(lexemType='DIVISION OPERATOR')
+
             # CHARACTER STRING DELIMITER
             #  └ STRING
             #     └ SYMBOL "'"
-            elif self.__currentLexem['Description'].upper() == 'CHARACTER STRING DELIMITER':
-                self.__DecPosition()
-                Lexem = self.__GetStringLexem()
+            elif self.__IsApostropheLexem():
+                self.__GetLastLexem()
+                self.__GetStringLexem()
             
             # QUOTED IDENTIFIER DELIMITER
             #  └ QUOTED IDENTIFIER
-            elif self.__currentLexem['Description'].upper() == 'QUOTED IDENTIFIER DELIMITER':
-                self.__DecPosition()
-                Lexem = self.__GetQuotedIdentifierLexem()
+            elif self.__IsQuoteLexem():
+                self.__GetLastLexem()
+                self.__GetQuotedIdentifierLexem()
 
             # Lexem "as is"
             else:
-                Lexem['Lexem'] = self.__currentLexem['Lexem']
-                Lexem['Length'] = self.__currentLexem['Length']
-                Lexem['Type'] = 'LEXEM'
-                #self.__currentLexem['Description']
+                self.__AppendCurrentLexem()
             
-            self.__currentStatement.append(Lexem)
         self.__SqlStatements.append(self.__currentStatement)
 
     def __GetSqlBlock(self):
-        #return
         self.__currentStatement = []
+
         while self.__GetNextLexem():
-            Lexem = self.__GetStatementLexemRow()
-            
             # SPACE
-            if self.__currentLexem['Description'].upper() == 'SPACE':
-                Lexem['Lexem'] = ' '
-                Lexem['Length'] = 1
-                Lexem['Type'] = 'SPACE'
+            if self.__IsSpaceLexem():
+                self.__AppendCurrentLexem(lexem=' ',lexemType='SPACE',lexemLength=1)
             
             # SUBTRACTION/NEGATION OPERATOR
             #  ├ ONELINE COMMENT
             #  └ SUBTRACTION/NEGATION OPERATOR
-            elif self.__currentLexem['Description'].upper() == 'SUBTRACTION/NEGATION OPERATOR':                
+            elif self.__IsSubtractionLexem():
                 if self.__IsOneLineComment():
-                    self.__DecPosition()
-                    Lexem = self.__GetOneLineCommentStatement()
+                    self.__GetLastLexem()
+                    self.__GetOneLineCommentStatement()
                 else:
-                    Lexem['Lexem'] = self.__currentLexem['Lexem']
-                    Lexem['Length'] = self.__currentLexem['Length']
-                    Lexem['Type'] = 'SUBTRACTION/NEGATION OPERATOR'                    
-            
+                    self.__AppendCurrentLexem(lexemType='SUBTRACTION/NEGATION OPERATOR')
+                                
             # DIVISION OPERATOR
             #  ├ MULTYLINE COMMENT
             #  └ DIVISION OPERATOR
-            elif self.__currentLexem['Description'].upper() == 'DIVISION OPERATOR':
+            elif self.__IsDivisionLexem():
                 if self.__IsMultyLineComment():
-                    self.__DecPosition()
-                    Lexem = self.__GetMultyLineCommentStatement()
+                    self.__GetLastLexem()
+                    self.__GetMultyLineCommentStatement()
                 else:                
-                    Lexem['Lexem'] = self.__currentLexem['Lexem']
-                    Lexem['Length'] = self.__currentLexem['Length']
-                    Lexem['Type'] = 'DIVISION OPERATOR'
+                    self.__AppendCurrentLexem(lexemType='DIVISION OPERATOR')
             
             # CHARACTER STRING DELIMITER
             #  └ STRING
             #     └ SYMBOL "'"
-            elif self.__currentLexem['Description'].upper() == 'CHARACTER STRING DELIMITER':
-                self.__DecPosition()
-                Lexem = self.__GetStringLexem()
+            elif self.__IsApostropheLexem():
+                self.__GetLastLexem()
+                self.__GetStringLexem()
             
             # QUOTED IDENTIFIER DELIMITER
             #  └ QUOTED IDENTIFIER
-            elif self.__currentLexem['Description'].upper() == 'QUOTED IDENTIFIER DELIMITER':
-                self.__DecPosition()
-                Lexem = self.__GetQuotedIdentifierLexem()
+            elif self.__IsQuoteLexem():
+                self.__GetLastLexem()
+                self.__GetQuotedIdentifierLexem()
 
             # STATEMENT TERMINATOR
             #  └ END OF SQL STATEMENT
-            elif self.__currentLexem['Description'].upper() == 'STATEMENT TERMINATOR':
-                Lexem['Lexem'] = self.__currentLexem['Lexem']
-                Lexem['Length'] = self.__currentLexem['Length']
-                Lexem['Type'] = 'END SQL STATEMENT'
-                self.__currentStatement.append(Lexem)
+            elif self.__IsStatementTerminatorLexem():
+                self.__AppendCurrentLexem(lexemType='END SQL STATEMENT')
                 break
 
             # Lexem "as is"
             else:
-                Lexem['Lexem'] = self.__currentLexem['Lexem']
-                Lexem['Length'] = self.__currentLexem['Length']
-                Lexem['Type'] = 'LEXEM'
-                #self.__currentLexem['Description']
+                self.__AppendCurrentLexem(lexemType='LEXEM')
             
-            self.__currentStatement.append(Lexem)
         self.__SqlStatements.append(self.__currentStatement)
 
     '''
@@ -674,38 +671,32 @@ class ScriptParser:
         commentBody = ''
         closeCommentLexem = ''
         oneLineComment = False
-        statementLexemRow = self.__GetStatementLexemRow()
+
         self.__currentStatement = []
         self.__statementNumber += 1
         
         if self.__GetNextLexem():
             openCommentLexem += self.__currentLexem['Lexem']
         else:
-            #error
-            self.__splitStatementError['ErrorCode'] = 1
-            self.__splitStatementError['ErrorText'] = 'unexpected end of block'
+            self.__SetError(1,'unexpected end of block')
             return
 
         if self.__GetNextLexem():
             openCommentLexem += self.__currentLexem['Lexem']
         else:
-            #error
-            self.__splitStatementError['ErrorCode'] = 1
-            self.__splitStatementError['ErrorText'] = 'unexpected end of block'
+            self.__SetError(1,'unexpected end of block')
             return
 
         if openCommentLexem not in [self.__compoundSymbols['SINGLE-LINE COMMENT INDICATOR'],
                                     self.__compoundSymbols['MULTI-LINE COMMENT DELIMITER (BEGIN)']]:
-            #error
-            self.__splitStatementError['ErrorCode'] = 1
-            self.__splitStatementError['ErrorText'] = 'not comment symbol'
+            self.__SetError(1,'not comment symbol')
             return
         else:
             if openCommentLexem == self.__compoundSymbols['SINGLE-LINE COMMENT INDICATOR']:
                 oneLineComment = True
 
         while self.__GetNextLexem():
-            if oneLineComment and self.__currentLexem['Lexem'] == self.__otherSymbols['NEWLINE CHARACTER']:
+            if oneLineComment and self.__IsNewLineLexem(): 
                 closeCommentLexem = self.__currentLexem['Lexem']
                 break
 
@@ -715,9 +706,7 @@ class ScriptParser:
                 if self.__GetNextLexem():
                     closeCommentLexem += self.__currentLexem['Lexem']
                 else:
-                    #error
-                    self.__splitStatementError['ErrorCode'] = 1
-                    self.__splitStatementError['ErrorText'] = 'unexpected end of block'
+                    self.__SetError(1,'unexpected end of block')
                     return
                 
                 if closeCommentLexem == self.__compoundSymbols['MULTI-LINE COMMENT DELIMITER (END)']:
@@ -727,11 +716,10 @@ class ScriptParser:
 
             commentBody += self.__currentLexem['Lexem']
         
-        statementLexemRow['Lexem'] = openCommentLexem + commentBody + closeCommentLexem
-        statementLexemRow['Type'] = 'COMMENT'
-        statementLexemRow['Length'] = len(openCommentLexem + commentBody + closeCommentLexem)
-
-        self.__currentStatement = [statementLexemRow]
+        self.__AppendCurrentLexem(lexem=openCommentLexem + commentBody + closeCommentLexem,
+                                  lexemType='COMMENT',
+                                  lexemLength=len(openCommentLexem + commentBody + closeCommentLexem))
+        
         self.__SqlStatements.append(self.__currentStatement)
 
     def __SplitStatements(self):
@@ -741,21 +729,21 @@ class ScriptParser:
         self.__splitStatementError['ErrorText'] = ''
 
         while self.__GetNextLexem():
-            if self.__currentLexem['Lexem'].upper() == 'CREATE':
+            if self.__IsCreateLexem():
                 self.__DecPosition()
                 self.__GetCreateStatement()
-            elif self.__currentLexem['Lexem'].upper() == 'DECLARE':
+            elif self.__IsDeclareLexem():
                 self.__DecPosition()
                 self.__GetPlSqlBlock()
-            elif self.__currentLexem['Description'].upper() == 'NEWLINE CHARACTER':
+            elif self.__IsNewLineLexem():
                 pass
-            elif self.__currentLexem['Description'].upper() == 'SPACE':
+            elif self.__IsSpaceLexem():
                 pass
-            elif self.__currentLexem['Description'].upper() in ['SUBTRACTION/NEGATION OPERATOR',
-                                                                'DIVISION OPERATOR']:
+            elif self.__IsDivisionLexem() or self.__IsSubtractionLexem():
                 self.__DecPosition()
                 self.__GetOutBlockComment()
             else:
+                self.__DecPosition()
                 self.__GetSqlBlock()
 
     def __GetStatements(self):
@@ -794,6 +782,10 @@ class ScriptParser:
 
         for statement in self.__SqlTextStatements:
             print(statement)
+
+        for index, statement in enumerate(self.__SqlStatements):
+            for statementRow in statement:
+                print(statementRow)
 
 ScriptParser().LoadScript('''
                           -- some text
