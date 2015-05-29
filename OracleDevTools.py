@@ -13,12 +13,14 @@ import sys
 import os
 #sys.path.append(os.path.dirname(sys.executable))
 sys.path.append(os.path.join(os.path.dirname(__file__), "lib","cx_Oracle"))
-sys.path.append(os.path.join(os.path.dirname(__file__), "lib","printtable"))
+#sys.path.append(os.path.join(os.path.dirname(__file__)))
+#sys.path.append(os.path.join(os.path.dirname(__file__), "lib","printtable"))
 import sublime
 import sublime_plugin
 import cx_Oracle
 import binascii
 import time
+from SqlScriptParser import ScriptParser
 
 #        ▄▄▄   ▄▄▄·  ▄▄· ▄▄▌  ▄▄▄ .    .▄▄ · ▄▄▄ ..▄▄ · .▄▄ · ▪         ▐ ▄      ▄▄· ▄▄▌   ▄▄▄· .▄▄ · .▄▄ · 
 #  ▪     ▀▄ █·▐█ ▀█ ▐█ ▌▪██•  ▀▄.▀·    ▐█ ▀. ▀▄.▀·▐█ ▀. ▐█ ▀. ██ ▪     •█▌▐█    ▐█ ▌▪██•  ▐█ ▀█ ▐█ ▀. ▐█ ▀. 
@@ -373,6 +375,54 @@ class ExecSqlCommand(sublime_plugin.TextCommand):
         if output:
             currentSession.OutputResult(view,edit,output,'SQL result')
 
+#  ▄▄▄ .▐▄• ▄ ▄▄▄ . ▄▄·     .▄▄ · .▄▄▄  ▄▄▌      .▄▄ ·  ▄▄· ▄▄▄  ▪   ▄▄▄·▄▄▄▄▄
+#  ▀▄.▀· █▌█▌▪▀▄.▀·▐█ ▌▪    ▐█ ▀. ▐▀•▀█ ██•      ▐█ ▀. ▐█ ▌▪▀▄ █·██ ▐█ ▄█•██  
+#  ▐▀▀▪▄ ·██· ▐▀▀▪▄██ ▄▄    ▄▀▀▀█▄█▌·.█▌██▪      ▄▀▀▀█▄██ ▄▄▐▀▀▄ ▐█· ██▀· ▐█.▪
+#  ▐█▄▄▌▪▐█·█▌▐█▄▄▌▐███▌    ▐█▄▪▐█▐█▪▄█·▐█▌▐▌    ▐█▄▪▐█▐███▌▐█•█▌▐█▌▐█▪·• ▐█▌·
+#   ▀▀▀ •▀▀ ▀▀ ▀▀▀ ·▀▀▀      ▀▀▀▀ ·▀▀█. .▀▀▀      ▀▀▀▀ ·▀▀▀ .▀  ▀▀▀▀.▀    ▀▀▀
+# Выполнить скрипт
+# "command": "exec_sql_script"
+class ExecSqlScriptCommand(sublime_plugin.TextCommand):  
+    def run(self, edit):
+        region = self.view.sel()[0]
+        
+        if not region.empty():
+            scriptText = self.view.substr(region)
+        else:
+            scriptText = self.view.substr(sublime.Region(0, self.view.size()))
+        
+        parser = ScriptParser().LoadScript(scriptText)
+
+        if not currentSession.IsConnected():
+            currentSession.ShowError(currentSession.oracleSessionError)
+            return
+
+        cursor = currentSession.cursor()
+
+        output = ''
+
+        for index, statement in enumerate(parser.SqlStatements):
+            try:
+                result = cursor.execute(statement)
+            except cx_Oracle.Error, e:
+                output += 'STATEMENT::#' + str(index) + '\n'
+                output += 'STATEMENT TEXT::' + '\n'
+                output += statement + '\n'
+                output += 'ERRORTEXT::' + str(e) + '\n'
+            else:
+                if result:
+                    output += 'STATEMENT::#' + str(index) + '\n'
+                    output += currentSession.GetSqlResultAsText(result)
+                else:
+                    output += 'STATEMENT::#' + str(index) + '\n'
+                    output += 'completed' + '\n\n'
+                    if currentSession.dbms_output:
+                        dbms_output = currentSession.GetDbmsOutput()
+                        if dbms_output:
+                            output += "DBMS OUTPUT :: \n" + dbms_output + '\n'
+            
+        currentSession.OutputResult(self.view,edit,output,'script result')                
+
 #  .▄▄ · ▄▄▄ .▄▄▄▄▄▄▄▄▄▄▪   ▐ ▄  ▄▄ • .▄▄ · 
 #  ▐█ ▀. ▀▄.▀·•██  •██  ██ •█▌▐█▐█ ▀ ▪▐█ ▀. 
 #  ▄▀▀▀█▄▐▀▀▪▄ ▐█.▪ ▐█.▪▐█·▐█▐▐▌▄█ ▀█▄▄▀▀▀█▄
@@ -405,7 +455,6 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
 
         if not region.empty():
             selection = view.substr(region)
-
 
         if menu[index] == 'Open settings':
             self.view.window().open_file(os.path.join(sublime.packages_path(), "OracleDevTools", "OracleDevTools.sublime-settings"))
@@ -577,11 +626,11 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
 
             elif object_type[0] == 'PACKAGE' or object_type[0] == 'PACKAGE BODY':                   
                 output += 'DESCRIPTION :: \n'
-                output += currentSession.GetObjectDescr (selection, 'PACKAGE',      object_type[1])
+                output += currentSession.GetObjectDescr (selection, 'PACKAGE', object_type[1])
                 output += currentSession.GetObjectDescr (selection, 'PACKAGE BODY', object_type[1])
                 output += currentSession.GetObjectArguments(selection, 'PACKAGE', object_type[1])
                 output += 'ERRORS :: \n'
-                output += currentSession.GetObjectErrors(selection, 'PACKAGE',      object_type[1])
+                output += currentSession.GetObjectErrors(selection, 'PACKAGE', object_type[1])
                 output += currentSession.GetObjectErrors(selection, 'PACKAGE BODY', object_type[1])
                 output += 'DDL :: \n'
                 output += currentSession.GetObjectDDL(selection, 'PACKAGE', object_type[1])
@@ -641,9 +690,9 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
             except cx_Oracle.Error, e:
                 currentSession.ShowError(str(e))
             else:
+                output = ''
+                
                 if result:
-                    output = ''
-
                     # Почему-то если извлекать больше 50 строк, то возникает ошибка:
                     # cx_Oracle.ProgrammingError: LOB variable no longer valid after subsequent fetch
                     for index_j, row in enumerate(result.fetchmany(currentSession.maxRows if currentSession.maxRows <= 50 else 50)):

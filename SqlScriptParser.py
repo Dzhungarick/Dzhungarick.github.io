@@ -80,6 +80,10 @@ class ScriptParser:
         self.__scriptText = ''
         self.__splitStatementError = dict.fromkeys(['ErrorCode','ErrorText'])
 
+    @property
+    def SqlStatements(self):
+        return self.__SqlTextStatements
+
     def __GetLexemStructRow(self):
         return dict.fromkeys(['Lexem',
                               'Lexem Class',
@@ -339,9 +343,9 @@ class ScriptParser:
     def __AppendCurrentLexem(self,lexem=None,lexemType=None,lexemLength=None):
         Lexem = self.__GetStatementLexemRow()
         
-        Lexem['Lexem']  = lexem       if lexem       else self.__currentLexem['Lexem']
-        Lexem['Length'] = lexemLength if lexemLength else self.__currentLexem['Length']
-        Lexem['Type']   = lexemType   if lexemType   else 'LEXEM'
+        Lexem['Lexem'] = lexem if lexem else self.__currentLexem['Lexem']
+        Lexem['Length'] = len(lexem) if lexem else len(self.__currentLexem['Lexem'])
+        Lexem['Type'] = lexemType if lexemType else 'LEXEM'
 
         self.__currentStatement.append(Lexem)
 
@@ -356,8 +360,7 @@ class ScriptParser:
                 break
 
         self.__AppendCurrentLexem(lexem=oneLineComment,
-                                  lexemType='COMMENT',
-                                  lexemLength=len(oneLineComment))
+                                  lexemType='COMMENT')
 
     # "/*"──┐    
     #       └──>"*/"
@@ -384,8 +387,7 @@ class ScriptParser:
             multyLineComment += self.__currentLexem['Lexem']
 
         self.__AppendCurrentLexem(lexem=multyLineComment + closeCommentLexem,
-                                  lexemType='MULTYLINE COMMENT',
-                                  lexemLength=len(multyLineComment + closeCommentLexem))
+                                  lexemType='MULTYLINE COMMENT')
 
     # "'"──┐
     #      └──["''"]──┐
@@ -418,8 +420,7 @@ class ScriptParser:
             string += self.__currentLexem['Lexem']
         
         self.__AppendCurrentLexem(lexem=string,
-                                  lexemType='STRING',
-                                  lexemLength=len(string))
+                                  lexemType='STRING')
         
 
     # '"'─────>'"' 
@@ -443,8 +444,7 @@ class ScriptParser:
                 break
 
         self.__AppendCurrentLexem(lexem=quotedIdentifier,
-                                  lexemType='QUOTED IDENTIFIER',
-                                  lexemLength=len(quotedIdentifier))
+                                  lexemType='QUOTED IDENTIFIER')
 
     # "--"    
     def __IsOneLineComment(self):
@@ -544,6 +544,9 @@ class ScriptParser:
     def __IsDeclareLexem(self):
         return self.__currentLexem['Lexem'].upper() == 'DECLARE'
 
+    def __IsBeginLexem(self):
+        return self.__currentLexem['Lexem'].upper() == 'BEGIN'
+
     def __IsENDLexem(self):
         return self.__currentLexem['Lexem'].upper() == 'END'
     
@@ -553,7 +556,7 @@ class ScriptParser:
         while self.__GetNextLexem():
             # SPACE
             if self.__IsSpaceLexem():
-                self.__AppendCurrentLexem(lexem=' ',lexemType='SPACE',lexemLength=1)
+                self.__AppendCurrentLexem(lexem=' ',lexemType='SPACE')
             
             # SUBTRACTION/NEGATION OPERATOR
             #  ├ ONELINE COMMENT
@@ -604,7 +607,7 @@ class ScriptParser:
         while self.__GetNextLexem():
             # SPACE
             if self.__IsSpaceLexem():
-                self.__AppendCurrentLexem(lexem=' ',lexemType='SPACE',lexemLength=1)
+                self.__AppendCurrentLexem(lexem=' ',lexemType='SPACE')
             
             # SUBTRACTION/NEGATION OPERATOR
             #  ├ ONELINE COMMENT
@@ -651,19 +654,40 @@ class ScriptParser:
             
         self.__SqlStatements.append(self.__currentStatement)
 
-    '''
-    PL/SQL::
-    CREATE OR REPLACE LIBRARY
-    CREATE OR REPLACE FUNCTION
-    CREATE OR REPLACE PACKAGE
-    CREATE OR REPLACE PACKAGE BODY
-    CREATE OR REPLACE PROCEDURE
-    CREATE OR REPLACE TRIGGER
-    CREATE OR REPLACE TYPE
-    CREATE OR REPLACE TYPE BODY
-    '''
     def __GetCreateStatement(self):
-        self.__IncPosition()
+        plsqlObjects = ['LIBRARY','FUNCTION','PACKAGE','PROCEDURE','TRIGGER','TYPE']
+        deepBackPosition = 0
+        isFindOR = False
+        isFindREPLACE = False
+        
+        deepBackPosition -= 1
+        if not self.__GetNextLexem():
+            self.__SetError(5,'unexpected end of block')
+            return
+        
+        if not self.__IsCreateLexem():
+            self.__SetError(5,'not create lexem')
+            return
+
+        while self.__GetNextLexem():
+            deepBackPosition -= 1
+
+            if not self.__IsIgnoreLexem():
+                if self.__currentLexem['Lexem'].upper() == 'OR':
+                    isFindOR = True
+                elif self.__currentLexem['Lexem'].upper() == 'REPLACE':
+                    if not isFindOR:
+                        self.__SetError(5,'lexem "OR" expected')  
+                        return
+                    isFindREPLACE = True
+                elif self.__currentLexem['Lexem'].upper() in plsqlObjects:
+                    self.__OffsetPosition(deepBackPosition)
+                    self.__GetPlSqlBlock()
+                    return
+                else:
+                    self.__OffsetPosition(deepBackPosition)
+                    self.__GetSqlBlock()
+                    return
     
     # Out block comment
     def __GetOutBlockComment(self):
@@ -717,8 +741,7 @@ class ScriptParser:
             commentBody += self.__currentLexem['Lexem']
         
         self.__AppendCurrentLexem(lexem=openCommentLexem + commentBody + closeCommentLexem,
-                                  lexemType='COMMENT',
-                                  lexemLength=len(openCommentLexem + commentBody + closeCommentLexem))
+                                  lexemType='COMMENT')
         
         self.__SqlStatements.append(self.__currentStatement)
 
@@ -732,7 +755,7 @@ class ScriptParser:
             if self.__IsCreateLexem():
                 self.__DecPosition()
                 self.__GetCreateStatement()
-            elif self.__IsDeclareLexem():
+            elif self.__IsDeclareLexem() or self.__IsBeginLexem():
                 self.__DecPosition()
                 self.__GetPlSqlBlock()
             elif self.__IsNewLineLexem():
@@ -775,44 +798,23 @@ class ScriptParser:
 
         self.__GetStatements()
         
+        return self
+        '''
         print(self.__GetLexemsAsTextTable())
         
         if not self.__splitStatementError['ErrorCode'] == 0:
-            print('SPLITSTATEMENTERROR::'+self.__splitStatementError['ErrorText'])
+            print('SPLITSTATEMENTERROR::'+    self.__splitStatementError['ErrorText']
+                                    +'::'+str(self.__splitStatementError['ErrorCode']),str(self.__currentPosition))
 
-        for statement in self.__SqlTextStatements:
+        print('STATEMENTS COUNT::' + str(len(self.__SqlStatements)))
+        for index, statement in enumerate(self.__SqlTextStatements):
+            print("STATEMENT::#"+str(index))
             print(statement)
-
+        
         for index, statement in enumerate(self.__SqlStatements):
             for statementRow in statement:
                 print(statementRow)
-
-ScriptParser().LoadScript('''
-                          -- some text
-                          /* multyline 
-                          comment */ 
-                          declare
-                            a number; -- comment
-                            b varchar2(4000) := 'string''_value';
-                            c varchar2(4000) := 'string_value2';
-                            "hernya" number;
-                          begin
-                            /** comment2 
-                                second row
-                            */
-                            /*  comment3 */BEGIN NULL; END;
-                             
-                             IF a<>0 THEN
-                                NULL;
-                             END IF;   
-                            
-                            a := a/1;
-
-                            null;
-                          end;
-                          /
-                          -- some text
-                          /* multyline 
-                          comment */
-                          select '1;2' as "ONE", acc.* from daccount_dbt acc;
-                          ''')
+        
+        sublime.message_dialog('OK')
+        '''
+#ScriptParser().LoadScript('')
