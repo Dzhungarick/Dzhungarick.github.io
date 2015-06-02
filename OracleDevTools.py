@@ -69,11 +69,17 @@ class ExecSqlCommand(sublime_plugin.TextCommand):
 class ExecSqlScriptCommand(sublime_plugin.TextCommand):  
     def run(self, edit):
         region = self.view.sel()[0]
-        
+
         if not region.empty():
             scriptText = self.view.substr(region)
+            offset = region.begin()
         else:
             scriptText = self.view.substr(sublime.Region(0, self.view.size()))
+            offset = 0
+        
+        regions = self.view.get_regions("checkStatementMark")            
+
+        self.view.erase_regions("checkStatementMark")
 
         parser = ScriptParser().LoadScript(scriptText)
 
@@ -82,15 +88,26 @@ class ExecSqlScriptCommand(sublime_plugin.TextCommand):
             return
 
         for index, statement in enumerate(parser.SqlStatements):
-            result = session.execute(statement)
+            result = session.execute(statement['Statement Text'])
             
-            #self.view.add_regions("mark", [self.view.lines(sublime.Region(0, self.view.size()))[index]], "mark", "bookmark", sublime.PERSISTENT)
+            self.view.add_regions("statementMark", 
+                                  [sublime.Region(statement['Statement Begin Position']+offset, statement['Statement End Position']+offset)], 
+                                  "string", 
+                                  "bookmark", 
+                                  sublime.DRAW_OUTLINED)
+            
+            firstLine = self.view.lines(self.view.get_regions("statementMark")[0])[0]
+            self.view.show(firstLine)
 
             session.PutOutputText('STATEMENT::#' + str(index) + '\n')
             if session.HasError():
+                errText = session.sessionError
                 session.PutOutputText('STATEMENT TEXT::' + '\n')
-                session.PutOutputText(statement + '\n')
-                session.PutOutputText('ERRORTEXT::' + str(session.sessionError) + '\n')
+                session.PutOutputText(statement['Statement Text'] + '\n')
+                session.PutOutputText('ERRORTEXT::' + errText + '\n')
+
+                if not sublime.ok_cancel_dialog(errText+'\nContinue?'):
+                    break
             else:
                 if result:
                     session.PutOutputText(session.GetSqlResultAsText(result))
@@ -102,6 +119,14 @@ class ExecSqlScriptCommand(sublime_plugin.TextCommand):
                         if dbms_output:
                             session.PutOutputText("DBMS OUTPUT :: \n" + dbms_output + '\n')
         
+        self.view.erase_regions("statementMark")
+        
+        self.view.add_regions("checkStatementMark", 
+                              regions, 
+                              "string", 
+                              "bookmark", 
+                              sublime.DRAW_OUTLINED)
+
         session.OutputResult(self.view,edit,'script result')                
 
 #  .▄▄ · ▄▄▄ .▄▄▄▄▄▄▄▄▄▄▪   ▐ ▄  ▄▄ • .▄▄ · 
@@ -117,6 +142,7 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
                      'Describe',
                      'Explain Plan',
                      'Extract CLOB from SELECT',
+                     'Check Script',
                      'Reconnect',
                      'Disconnect',
                      'Show current connection string',
@@ -449,6 +475,30 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
                 session.PutOutputText(row[0] + '\n')
 
             session.OutputResult(view,self.edit,'EXPLAIN PLAN')                    
+
+        elif menu[index] == 'Check Script':
+            region = view.sel()[0]
+
+            if not region.empty():
+                scriptText = view.substr(region)
+            else:
+                scriptText = view.substr(sublime.Region(0, view.size()))
+
+            outWindow = view.window().new_file()
+            outWindow.insert(self.edit,0,scriptText)
+            outWindow.set_name('Parsed Script')
+
+            parser = ScriptParser().LoadScript(scriptText)
+            regions = []
+
+            for index, statement in enumerate(parser.SqlStatements):
+                regions.append(sublime.Region(statement['Statement Begin Position'], statement['Statement End Position']))
+            
+            outWindow.add_regions("checkStatementMark", 
+                                  regions, 
+                                  "entity", 
+                                  "bookmark", 
+                                  sublime.DRAW_OUTLINED)
 
     def on_find_object_done(self, index):
         if index == -1:

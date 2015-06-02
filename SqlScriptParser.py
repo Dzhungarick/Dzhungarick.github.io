@@ -76,6 +76,7 @@ class ScriptParser:
         self.__lexemList = []
         self.__SqlStatements = []
         self.__SqlTextStatements = []
+        self.__statementsPositions = []
         self.__plsqlDelimiters = '()+-*/<>=!~^;:.\'@%,"#$&|{}?[]'
         self.__scriptText = ''
         self.__splitStatementError = dict.fromkeys(['ErrorCode','ErrorText'])
@@ -317,7 +318,7 @@ class ScriptParser:
         return self.__currentPosition < len(self.__lexemList)
 
     def __GetNextLexem(self):
-        self.__currentLexem = []
+        #self.__currentLexem = []
         if not self.__splitStatementError['ErrorCode'] == 0:
             return False
 
@@ -340,13 +341,15 @@ class ScriptParser:
         self.__splitStatementError['ErrorCode'] = errCode
         self.__splitStatementError['ErrorText'] = errText
 
-    def __AppendCurrentLexem(self,lexem=None,lexemType=None,lexemLength=None):
+    def __AppendCurrentLexem(self,lexem=None,
+                                  lexemType=None,
+                                  lexemLength=None):
         Lexem = self.__GetStatementLexemRow()
         
         Lexem['Lexem'] = lexem if lexem else self.__currentLexem['Lexem']
         Lexem['Length'] = len(lexem) if lexem else len(self.__currentLexem['Lexem'])
         Lexem['Type'] = lexemType if lexemType else 'LEXEM'
-
+        
         self.__currentStatement.append(Lexem)
 
     # "--"─────>"\n"
@@ -552,6 +555,7 @@ class ScriptParser:
     
     def __GetPlSqlBlock(self):
         self.__currentStatement = []
+        beginPosition = self.__currentLexem['Begin Position']
 
         while self.__GetNextLexem():
             # SPACE
@@ -598,11 +602,15 @@ class ScriptParser:
             # Lexem "as is"
             else:
                 self.__AppendCurrentLexem()
-            
-        self.__SqlStatements.append(self.__currentStatement)
+
+        endPosition = self.__currentLexem['End Position']
+        self.__SqlStatements.append({'Statement Lexems': self.__currentStatement,
+                                     'Statement Begin Position': beginPosition,
+                                     'Statement End Position': endPosition})
 
     def __GetSqlBlock(self):
         self.__currentStatement = []
+        beginPosition = self.__currentLexem['Begin Position']
 
         while self.__GetNextLexem():
             # SPACE
@@ -652,7 +660,10 @@ class ScriptParser:
             else:
                 self.__AppendCurrentLexem(lexemType='LEXEM')
             
-        self.__SqlStatements.append(self.__currentStatement)
+        endPosition = self.__currentLexem['End Position']        
+        self.__SqlStatements.append({'Statement Lexems': self.__currentStatement,
+                                     'Statement Begin Position': beginPosition,
+                                     'Statement End Position': endPosition})
 
     def __GetCreateStatement(self):
         plsqlObjects = ['LIBRARY','FUNCTION','PACKAGE','PROCEDURE','TRIGGER','TYPE']
@@ -695,6 +706,7 @@ class ScriptParser:
         commentBody = ''
         closeCommentLexem = ''
         oneLineComment = False
+        beginPosition = self.__currentLexem['Begin Position']
 
         self.__currentStatement = []
         self.__statementNumber += 1
@@ -736,14 +748,17 @@ class ScriptParser:
                 if closeCommentLexem == self.__compoundSymbols['MULTI-LINE COMMENT DELIMITER (END)']:
                     break
                 else:
-                    self.__DecPosition()
+                    self.__GetLastLexem()
 
             commentBody += self.__currentLexem['Lexem']
         
         self.__AppendCurrentLexem(lexem=openCommentLexem + commentBody + closeCommentLexem,
                                   lexemType='COMMENT')
         
-        self.__SqlStatements.append(self.__currentStatement)
+        endPosition = self.__currentLexem['End Position']        
+        self.__SqlStatements.append({'Statement Lexems': self.__currentStatement,
+                                     'Statement Begin Position': beginPosition,
+                                     'Statement End Position': endPosition})
 
     def __SplitStatements(self):
         self.__currentLexem = []
@@ -773,11 +788,16 @@ class ScriptParser:
         for index, statement in enumerate(self.__SqlStatements):
             statementText = ''
             
-            for statementRow in statement:
+            if statement['Statement Lexems'][0]['Type'] == 'COMMENT':
+                continue
+
+            for statementRow in statement['Statement Lexems']:
                 if statementRow['Type'] not in ['END PLSQL STATEMENT','END SQL STATEMENT']:
                     statementText += statementRow['Lexem']
-            
-            self.__SqlTextStatements.append(statementText)
+
+            self.__SqlTextStatements.append({'Statement Text': statementText,
+                                             'Statement Begin Position': statement['Statement Begin Position'],
+                                             'Statement End Position': statement['Statement End Position']})
 
     #  .▄▄ ·  ▄▄· ▄▄▄  ▪   ▄▄▄·▄▄▄▄▄    ▄▄▌         ▄▄▄· ·▄▄▄▄  ▄▄▄ .▄▄▄  
     #  ▐█ ▀. ▐█ ▌▪▀▄ █·██ ▐█ ▄█•██      ██•  ▪     ▐█ ▀█ ██▪ ██ ▀▄.▀·▀▄ █·
@@ -797,15 +817,13 @@ class ScriptParser:
         self.__SplitStatements()
 
         self.__GetStatements()
-        
-        return self
+
         '''
-        print(self.__GetLexemsAsTextTable())
-        
+        #print(self.__GetLexemsAsTextTable())
         if not self.__splitStatementError['ErrorCode'] == 0:
             print('SPLITSTATEMENTERROR::'+    self.__splitStatementError['ErrorText']
-                                    +'::'+str(self.__splitStatementError['ErrorCode']),str(self.__currentPosition))
-
+                                    +'::'+str(self.__splitStatementError['ErrorCode'])+'::'+str(self.__currentPosition))
+        
         print('STATEMENTS COUNT::' + str(len(self.__SqlStatements)))
         for index, statement in enumerate(self.__SqlTextStatements):
             print("STATEMENT::#"+str(index))
@@ -817,4 +835,6 @@ class ScriptParser:
         
         sublime.message_dialog('OK')
         '''
+
+        return self
 #ScriptParser().LoadScript('')
