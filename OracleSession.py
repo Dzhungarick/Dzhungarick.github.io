@@ -168,11 +168,14 @@ class OracleSession:
         self.ClearSessionError()
         return error
 
-    def OutputResult(self,sublimeView,sublimeEdit,windowName='result'):
+    def OutputResult(self,windowName='result'):
         if self.createNewWindow:
-            outWindow = sublimeView.window().new_file()
-            outWindow.insert(sublimeEdit,0,self.output)
+            outWindow = sublime.active_window().new_file()
             outWindow.set_name(windowName)
+            
+            edit = outWindow.begin_edit()
+            outWindow.insert(edit,0,self.output)
+            edit = outWindow.end_edit(edit)
         else:
             print(self.output)
 

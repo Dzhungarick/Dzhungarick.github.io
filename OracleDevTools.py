@@ -19,6 +19,20 @@ from OracleSession import OracleSession
 
 session = OracleSession()
 
+class SublimeViewEdit:
+    def __init__(self):
+        self.view = None
+        self.edit = None
+      
+        self.msSpeed = 5
+        self.statements = []
+        self.statementIndex = 0
+        self.offset = 0
+        self.stopDelay = False
+        self.inUse = False
+
+sublimeVE = SublimeViewEdit()
+
 #  ▄▄▄ .▐▄• ▄ ▄▄▄ . ▄▄·     .▄▄ · .▄▄▄  ▄▄▌  
 #  ▀▄.▀· █▌█▌▪▀▄.▀·▐█ ▌▪    ▐█ ▀. ▐▀•▀█ ██•  
 #  ▐▀▀▪▄ ·██· ▐▀▀▪▄██ ▄▄    ▄▀▀▀█▄█▌·.█▌██▪  
@@ -57,13 +71,70 @@ class ExecSqlCommand(sublime_plugin.TextCommand):
                 session.PutOutputText(session.GetDbmsOutput())
 
         if not session.OutputIsEmpty():
-            session.OutputResult(view,edit,'SQL result')
+            session.OutputResult('SQL result')
 
 #  ▄▄▄ .▐▄• ▄ ▄▄▄ . ▄▄·     .▄▄ · .▄▄▄  ▄▄▌      .▄▄ ·  ▄▄· ▄▄▄  ▪   ▄▄▄·▄▄▄▄▄
 #  ▀▄.▀· █▌█▌▪▀▄.▀·▐█ ▌▪    ▐█ ▀. ▐▀•▀█ ██•      ▐█ ▀. ▐█ ▌▪▀▄ █·██ ▐█ ▄█•██  
 #  ▐▀▀▪▄ ·██· ▐▀▀▪▄██ ▄▄    ▄▀▀▀█▄█▌·.█▌██▪      ▄▀▀▀█▄██ ▄▄▐▀▀▄ ▐█· ██▀· ▐█.▪
 #  ▐█▄▄▌▪▐█·█▌▐█▄▄▌▐███▌    ▐█▄▪▐█▐█▪▄█·▐█▌▐▌    ▐█▄▪▐█▐███▌▐█•█▌▐█▌▐█▪·• ▐█▌·
 #   ▀▀▀ •▀▀ ▀▀ ▀▀▀ ·▀▀▀      ▀▀▀▀ ·▀▀█. .▀▀▀      ▀▀▀▀ ·▀▀▀ .▀  ▀▀▀▀.▀    ▀▀▀
+def RunScriptMarkStatement(statementIndex,scope='entity'):
+    sublimeVE.view.add_regions("statementMark", 
+                               [sublime.Region(sublimeVE.statements[statementIndex]['Statement Begin Position']+sublimeVE.offset, 
+                                               sublimeVE.statements[statementIndex]['Statement End Position']+sublimeVE.offset)], 
+                               scope, 
+                               "bookmark", 
+                               sublime.DRAW_OUTLINED
+                               )
+    firstLine = sublimeVE.view.lines(sublimeVE.view.get_regions("statementMark")[0])[0]
+    sublimeVE.view.show(firstLine)
+
+# Рекурсивное выполнение sql блоков скрипта
+def RunScript():
+    statement = sublimeVE.statements[sublimeVE.statementIndex]
+   
+    result = session.execute(statement['Statement Text'])
+
+    session.PutOutputText('STATEMENT::#' + str(sublimeVE.statementIndex) + '\n')
+    
+    if session.HasError():
+        errText = session.sessionError
+        session.PutOutputText('STATEMENT TEXT::' + '\n')
+        session.PutOutputText(statement['Statement Text'] + '\n')
+        session.PutOutputText('ERRORTEXT::' + errText + '\n')
+
+        RunScriptMarkStatement(sublimeVE.statementIndex,'keyword')
+
+        if not sublime.ok_cancel_dialog(errText+'\nContinue?'):
+            sublimeVE.stopDelay = True
+    else:
+        if result:
+            session.PutOutputText(session.GetSqlResultAsText(result))
+        else:
+            session.PutOutputText('completed' + '\n\n')
+
+            if session.dbms_output:
+                dbms_output = session.GetDbmsOutput()
+                if dbms_output:
+                    session.PutOutputText("DBMS OUTPUT :: \n" + dbms_output + '\n')
+
+    sublimeVE.statementIndex += 1
+    if sublimeVE.statementIndex < len(sublimeVE.statements) and not sublimeVE.stopDelay:
+        RunScriptMarkStatement(sublimeVE.statementIndex)
+
+        sublime.set_timeout(RunScript, sublimeVE.msSpeed)
+    else:
+        sublimeVE.view.erase_regions("statementMark")
+        sublimeVE.inUse = False
+        session.OutputResult('script result')
+
+# Остановить выполнение скрипта
+# "command": "stop_run_script"
+class StopRunScriptCommand(sublime_plugin.TextCommand):  
+    def run(self, edit):
+        sublimeVE.inUse = False
+        sublimeVE.stopDelay = True
+
 # Выполнить скрипт
 # "command": "exec_sql_script"
 class ExecSqlScriptCommand(sublime_plugin.TextCommand):  
@@ -76,58 +147,30 @@ class ExecSqlScriptCommand(sublime_plugin.TextCommand):
         else:
             scriptText = self.view.substr(sublime.Region(0, self.view.size()))
             offset = 0
-        
-        regions = self.view.get_regions("checkStatementMark")            
-
-        self.view.erase_regions("checkStatementMark")
-
-        parser = ScriptParser().LoadScript(scriptText)
 
         if not session.IsConnected():
             session.ShowError()
+            return        
+        
+        if sublimeVE.inUse:
+            session.ShowError('Script execution in progress\nWait...')
             return
 
-        for index, statement in enumerate(parser.SqlStatements):
-            result = session.execute(statement['Statement Text'])
-            
-            self.view.add_regions("statementMark", 
-                                  [sublime.Region(statement['Statement Begin Position']+offset, statement['Statement End Position']+offset)], 
-                                  "string", 
-                                  "bookmark", 
-                                  sublime.DRAW_OUTLINED)
-            
-            firstLine = self.view.lines(self.view.get_regions("statementMark")[0])[0]
-            self.view.show(firstLine)
+        parser = ScriptParser().LoadScript(scriptText)
 
-            session.PutOutputText('STATEMENT::#' + str(index) + '\n')
-            if session.HasError():
-                errText = session.sessionError
-                session.PutOutputText('STATEMENT TEXT::' + '\n')
-                session.PutOutputText(statement['Statement Text'] + '\n')
-                session.PutOutputText('ERRORTEXT::' + errText + '\n')
+        sublimeVE.view = self.view
+        sublimeVE.edit = edit
+        sublimeVE.statements = parser.SqlStatements
+        sublimeVE.statementIndex = 0
+        sublimeVE.offset = offset
+        sublimeVE.stopDelay = False
+        sublimeVE.inUse = True
 
-                if not sublime.ok_cancel_dialog(errText+'\nContinue?'):
-                    break
-            else:
-                if result:
-                    session.PutOutputText(session.GetSqlResultAsText(result))
-                else:
-                    session.PutOutputText('completed' + '\n\n')
+        self.view.erase_regions("checkStatementMark")
+        RunScriptMarkStatement(sublimeVE.statementIndex)
 
-                    if session.dbms_output:
-                        dbms_output = session.GetDbmsOutput()
-                        if dbms_output:
-                            session.PutOutputText("DBMS OUTPUT :: \n" + dbms_output + '\n')
-        
-        self.view.erase_regions("statementMark")
-        
-        self.view.add_regions("checkStatementMark", 
-                              regions, 
-                              "string", 
-                              "bookmark", 
-                              sublime.DRAW_OUTLINED)
-
-        session.OutputResult(self.view,edit,'script result')                
+        #RunScript()
+        sublime.set_timeout(RunScript, sublimeVE.msSpeed)
 
 #  .▄▄ · ▄▄▄ .▄▄▄▄▄▄▄▄▄▄▪   ▐ ▄  ▄▄ • .▄▄ · 
 #  ▐█ ▀. ▀▄.▀·•██  •██  ██ •█▌▐█▐█ ▀ ▪▐█ ▀. 
@@ -402,7 +445,7 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
                 session.PutOutputText(session.GetObjectDDL(selection, object_type[0], object_type[1]))
             
             if not session.OutputIsEmpty():
-                session.OutputResult(view,self.edit,selection)
+                session.OutputResult(selection)
 
         elif menu[index] == 'Extract CLOB from SELECT':
             if not session.IsConnected():
@@ -430,7 +473,7 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
                                 session.PutOutputText('-'*len(value.read().decode(session.encoding)) + '\n\n')
                 
                 if not session.OutputIsEmpty():
-                    session.OutputResult(view,self.edit,'Extract LOB')
+                    session.OutputResult('Extract LOB')
                 else:
                     session.ShowError('No Clob')
         
@@ -474,7 +517,7 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
             for row in result.fetchall():
                 session.PutOutputText(row[0] + '\n')
 
-            session.OutputResult(view,self.edit,'EXPLAIN PLAN')                    
+            session.OutputResult('EXPLAIN PLAN')                    
 
         elif menu[index] == 'Check Script':
             region = view.sel()[0]

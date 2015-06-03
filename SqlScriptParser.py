@@ -555,7 +555,8 @@ class ScriptParser:
     
     def __GetPlSqlBlock(self):
         self.__currentStatement = []
-        beginPosition = self.__currentLexem['Begin Position']
+        # Костыль
+        beginPosition = 0 if self.__currentPosition == 0 else self.__currentLexem['Begin Position']
 
         while self.__GetNextLexem():
             # SPACE
@@ -610,7 +611,8 @@ class ScriptParser:
 
     def __GetSqlBlock(self):
         self.__currentStatement = []
-        beginPosition = self.__currentLexem['Begin Position']
+        # Костыль
+        beginPosition = 0 if self.__currentPosition == 0 else self.__currentLexem['Begin Position']
 
         while self.__GetNextLexem():
             # SPACE
@@ -706,7 +708,8 @@ class ScriptParser:
         commentBody = ''
         closeCommentLexem = ''
         oneLineComment = False
-        beginPosition = self.__currentLexem['Begin Position']
+        # Костыль
+        beginPosition = 0 if self.__currentPosition == 0 else self.__currentLexem['Begin Position']
 
         self.__currentStatement = []
         self.__statementNumber += 1
