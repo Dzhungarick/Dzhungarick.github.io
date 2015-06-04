@@ -19,7 +19,7 @@ import cx_Oracle
 #  ▐█▌.▐▌▐█•█▌▐█ ▪▐▌▐███▌▐█▌▐▌▐█▄▄▌    ▐█▄▪▐█▐█▄▄▌▐█▄▪▐█▐█▄▪▐█▐█▌▐█▌.▐▌██▐█▌    ▐███▌▐█▌▐▌▐█ ▪▐▌▐█▄▪▐█▐█▄▪▐█
 #   ▀█▄▀▪.▀  ▀ ▀  ▀ ·▀▀▀ .▀▀▀  ▀▀▀      ▀▀▀▀  ▀▀▀  ▀▀▀▀  ▀▀▀▀ ▀▀▀ ▀█▄▀▪▀▀ █▪    ·▀▀▀ .▀▀▀  ▀  ▀  ▀▀▀▀  ▀▀▀▀
 class OracleSession:
-    def __init__(self):
+    def __init__(self,needConnect=False):
         self.settings = sublime.load_settings('OracleDevTools.sublime-settings')        
         self.maxRows         = self.settings.get('rownum')
         self.user            = self.settings.get('username')
@@ -48,26 +48,26 @@ class OracleSession:
             print('unknown mode "{0}"::set "normal"'.format(self.connAs))
 
         os.environ['NLS_LANG'] = self.settings.get('nls_lang')
-        
-        try:
-            self.currentConnection = cx_Oracle.connect(self.user, 
-                                                       self.password, 
-                                                       self.connString,
-                                                       mode = connMode)
-            
-            self.currentConnection.cursor().callproc("DBMS_APPLICATION_INFO.SET_ACTION", ["sublime session"])
-            
-            self.encoding = self.currentConnection.encoding
-            
-            self.currentConnection.autocommit = self.autocommit
-            
-            if self.dbms_output:
-                self.currentConnection.cursor().callproc("dbms_output.enable")
-            
-            print('successfull connected::{0} ({1})'.format(self.user,self.connString))
-        except cx_Oracle.DatabaseError, e:
-            print('OracleSession :: ' + str(e))
-            self.oracleSessionError = str(e)
+        if self.settings.get('autoconnect',False) or needConnect:
+            try:
+                self.currentConnection = cx_Oracle.connect(self.user, 
+                                                           self.password, 
+                                                           self.connString,
+                                                           mode = connMode)
+                
+                self.currentConnection.cursor().callproc("DBMS_APPLICATION_INFO.SET_ACTION", ["sublime session"])
+                
+                self.encoding = self.currentConnection.encoding
+                
+                self.currentConnection.autocommit = self.autocommit
+                
+                if self.dbms_output:
+                    self.currentConnection.cursor().callproc("dbms_output.enable")
+                
+                print('successfull connected::{0} ({1})'.format(self.user,self.connString))
+            except cx_Oracle.DatabaseError, e:
+                print('OracleSession :: ' + str(e))
+                self.oracleSessionError = str(e)
     
     def ClearOutput(self):
         self.output = ''
@@ -105,7 +105,7 @@ class OracleSession:
                 self.ShowError(str(e))
 
         print('reconnecting...')
-        self.__init__()
+        self.__init__(True)
 
         if not self.IsConnected():
             self.ShowError()

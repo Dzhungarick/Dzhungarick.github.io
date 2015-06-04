@@ -19,20 +19,6 @@ from OracleSession import OracleSession
 
 session = OracleSession()
 
-class SublimeViewEdit:
-    def __init__(self):
-        self.view = None
-        self.edit = None
-      
-        self.msSpeed = 5
-        self.statements = []
-        self.statementIndex = 0
-        self.offset = 0
-        self.stopDelay = False
-        self.inUse = False
-
-sublimeVE = SublimeViewEdit()
-
 #  ▄▄▄ .▐▄• ▄ ▄▄▄ . ▄▄·     .▄▄ · .▄▄▄  ▄▄▌  
 #  ▀▄.▀· █▌█▌▪▀▄.▀·▐█ ▌▪    ▐█ ▀. ▐▀•▀█ ██•  
 #  ▐▀▀▪▄ ·██· ▐▀▀▪▄██ ▄▄    ▄▀▀▀█▄█▌·.█▌██▪  
@@ -78,6 +64,23 @@ class ExecSqlCommand(sublime_plugin.TextCommand):
 #  ▐▀▀▪▄ ·██· ▐▀▀▪▄██ ▄▄    ▄▀▀▀█▄█▌·.█▌██▪      ▄▀▀▀█▄██ ▄▄▐▀▀▄ ▐█· ██▀· ▐█.▪
 #  ▐█▄▄▌▪▐█·█▌▐█▄▄▌▐███▌    ▐█▄▪▐█▐█▪▄█·▐█▌▐▌    ▐█▄▪▐█▐███▌▐█•█▌▐█▌▐█▪·• ▐█▌·
 #   ▀▀▀ •▀▀ ▀▀ ▀▀▀ ·▀▀▀      ▀▀▀▀ ·▀▀█. .▀▀▀      ▀▀▀▀ ·▀▀▀ .▀  ▀▀▀▀.▀    ▀▀▀
+class SublimeViewEdit:
+    def __init__(self):
+        self.view = None
+        self.edit = None
+      
+        self.msSpeed = 5
+        self.statements = []
+        self.statementIndex = 0
+        self.offset = 0
+        self.stopDelay = False
+        self.inUse = False
+
+        self.startTime = None
+        self.finishTime = None
+
+sublimeVE = SublimeViewEdit()
+
 def RunScriptMarkStatement(statementIndex,scope='entity'):
     sublimeVE.view.add_regions("statementMark", 
                                [sublime.Region(sublimeVE.statements[statementIndex]['Statement Begin Position']+sublimeVE.offset, 
@@ -93,10 +96,12 @@ def RunScriptMarkStatement(statementIndex,scope='entity'):
 def RunScript():
     statement = sublimeVE.statements[sublimeVE.statementIndex]
    
+    begin_time = time.time()
+
     result = session.execute(statement['Statement Text'])
 
     session.PutOutputText('STATEMENT::#' + str(sublimeVE.statementIndex) + '\n')
-    
+    session.PutOutputText('START::' + time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(begin_time)) + '\n')
     if session.HasError():
         errText = session.sessionError
         session.PutOutputText('STATEMENT TEXT::' + '\n')
@@ -118,6 +123,11 @@ def RunScript():
                 if dbms_output:
                     session.PutOutputText("DBMS OUTPUT :: \n" + dbms_output + '\n')
 
+    end_time = time.time()
+
+    session.PutOutputText('FINISH::' + time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time)) + ' ')
+    session.PutOutputText('ELAPSED::' + str(round(end_time-begin_time,3)) + '\n\n')
+
     sublimeVE.statementIndex += 1
     if sublimeVE.statementIndex < len(sublimeVE.statements) and not sublimeVE.stopDelay:
         RunScriptMarkStatement(sublimeVE.statementIndex)
@@ -126,6 +136,10 @@ def RunScript():
     else:
         sublimeVE.view.erase_regions("statementMark")
         sublimeVE.inUse = False
+        sublimeVE.finishTime = time.time()
+        session.PutOutputText('START SCRIPT::' + time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(sublimeVE.startTime)) + '\n')
+        session.PutOutputText('FINISH SCRIPT::' + time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(sublimeVE.finishTime)) + '\n')
+        session.PutOutputText('FINISH SCRIPT::' + str(round(sublimeVE.finishTime-sublimeVE.startTime,3)))
         session.OutputResult('script result')
 
 # Остановить выполнение скрипта
@@ -165,6 +179,8 @@ class ExecSqlScriptCommand(sublime_plugin.TextCommand):
         sublimeVE.offset = offset
         sublimeVE.stopDelay = False
         sublimeVE.inUse = True
+        sublimeVE.startTime = time.time()
+        sublimeVE.finishTime = None
 
         self.view.erase_regions("checkStatementMark")
         RunScriptMarkStatement(sublimeVE.statementIndex)
