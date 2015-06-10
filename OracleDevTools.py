@@ -94,6 +94,17 @@ def RunScriptMarkStatement(statementIndex,scope='entity'):
 
 # Рекурсивное выполнение sql блоков скрипта
 def RunScript():
+    def MakeErrorStop(errText,statementText):
+        session.PutOutputText('STATEMENT TEXT::' + '\n')
+        session.PutOutputText(statementText + '\n')
+        session.PutOutputText('ERRORTEXT::' + errText + '\n')
+
+        RunScriptMarkStatement(sublimeVE.statementIndex,'keyword')
+
+        if not sublime.ok_cancel_dialog(errText+'\nContinue?'):
+            return True
+        return False
+
     statement = sublimeVE.statements[sublimeVE.statementIndex]
    
     begin_time = time.time()
@@ -102,19 +113,17 @@ def RunScript():
 
     session.PutOutputText('STATEMENT::#' + str(sublimeVE.statementIndex) + '\n')
     session.PutOutputText('START::' + time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(begin_time)) + '\n')
+    
     if session.HasError():
-        errText = session.sessionError
-        session.PutOutputText('STATEMENT TEXT::' + '\n')
-        session.PutOutputText(statement['Statement Text'] + '\n')
-        session.PutOutputText('ERRORTEXT::' + errText + '\n')
-
-        RunScriptMarkStatement(sublimeVE.statementIndex,'keyword')
-
-        if not sublime.ok_cancel_dialog(errText+'\nContinue?'):
+        if MakeErrorStop(session.sessionError, statement['Statement Text']):
             sublimeVE.stopDelay = True
     else:
         if result:
             session.PutOutputText(session.GetSqlResultAsText(result))
+            
+            if session.HasError():
+                if MakeErrorStop(session.sessionError, statement['Statement Text']):
+                    sublimeVE.stopDelay = True
         else:
             session.PutOutputText('completed' + '\n\n')
 
@@ -202,9 +211,7 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
                      'Explain Plan',
                      'Extract CLOB from SELECT',
                      'Check Script',
-                     'Reconnect',
-                     'Disconnect',
-                     'Show current connection string',
+                     'Session',
                      'Open settings']
         self.edit = edit
         self.view.window().show_quick_panel(self.menu,self.on_menu_done)
@@ -251,15 +258,13 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
             self.view.window().show_quick_panel(foundedObjects, self.on_find_object_done)   
             return
         
-        elif menu[index] == 'Reconnect':
-            session.Reconnect()
-        
-        elif menu[index] == 'Disconnect':
-            session.Disconnect()
-        
-        elif menu[index] == 'Show current connection string':
-            session.ShowCurrentConnection()
-        
+        elif menu[index] == 'Session':
+            self.sessionMenu = ['Connections',
+                                'Reconnect',
+                                'Disconnect',
+                                'Show current connection string']
+            self.view.window().show_quick_panel(self.sessionMenu, self.session_menu_choice)
+
         elif menu[index] == 'Describe':
             if not session.IsConnected():
                 session.ShowError()
@@ -280,6 +285,29 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
             object_type = result.fetchone()
             
             if not object_type:
+                # Если не нашли в ALL_OBJECTS, то ищем в списке констрэйнтов
+                sqlText = ''' WITH OBJ AS (SELECT LOWER (:obj_name) NAME FROM DUAL)
+                              SELECT CASE WHEN CONSTR.TYPE = 'R' THEN 'REF_CONSTRAINT'
+                                          ELSE 'CONSTRAINT'
+                                     END, 
+                                     CONSTR.OWNER
+                                FROM (SELECT CONSTRAINTS.OWNER OWNER,
+                                             CONSTRAINTS.CONSTRAINT_TYPE TYPE
+                                        FROM ALL_CONSTRAINTS CONSTRAINTS, OBJ
+                                       WHERE     LOWER (CONSTRAINTS.CONSTRAINT_NAME) = OBJ.NAME
+                                             AND CONSTRAINTS.OWNER = USER
+                                       UNION ALL
+                                      SELECT CONSTRAINTS.OWNER OWNER,
+                                             CONSTRAINTS.CONSTRAINT_TYPE TYPE
+                                        FROM ALL_CONSTRAINTS CONSTRAINTS, OBJ
+                                       WHERE     LOWER (CONSTRAINTS.CONSTRAINT_NAME) = OBJ.NAME
+                                             AND CONSTRAINTS.OWNER IN ('SYS')) CONSTR
+                          '''
+                result = session.execute(sqlText, obj_name = selection)                        
+            
+                object_type = result.fetchone()
+            
+            if not object_type:
                 session.ShowError('Объект не найден')
                 return
 
@@ -287,16 +315,31 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
             session.PutOutputText('OBJECT TYPE :: ' + object_type[0]    + '\n\n')
 
             if object_type[0] == 'TABLE':
+                sqlText = ''' SELECT *
+                                FROM ALL_TAB_COMMENTS TAB_COMMENT
+                               WHERE LOWER (TAB_COMMENT.TABLE_NAME) = LOWER(:tablename)
+                                     AND TAB_COMMENT.OWNER = :tableowner
+                          '''
+                result = session.execute(sqlText,tablename  = selection, 
+                                                 tableowner = object_type[1])
+                
+                session.PutOutputText(session.GetSqlResultAsText(result))
+                
                 session.PutOutputText('COLUMNS :: \n')
-
-                sqlText = ''' SELECT COLUMN_NAME "Column Name",
-                                     COLUMN_ID   "ID",
-                                     DATA_TYPE   "Data Type",
-                                     NULLABLE    "Nullable"
-                                FROM ALL_TAB_COLUMNS
-                               WHERE     LOWER(TABLE_NAME) = LOWER(:tablename)
-                                     AND OWNER = :tableowner
-                             ORDER BY COLUMN_ID
+                sqlText = ''' SELECT CLMN.COLUMN_NAME "Column Name",
+                                     CLMN.COLUMN_ID   "ID",
+                                     CLMN.DATA_TYPE   "Data Type",
+                                     CLMN.NULLABLE    "Nullable",
+                                     (SELECT CMMNT.COMMENTS
+                                        FROM ALL_COL_COMMENTS CMMNT
+                                       WHERE     CMMNT.OWNER = CLMN.OWNER
+                                             AND CMMNT.TABLE_NAME = CLMN.TABLE_NAME
+                                             AND CMMNT.COLUMN_NAME = CLMN.COLUMN_NAME)
+                                     "Comment"
+                                FROM ALL_TAB_COLUMNS CLMN
+                               WHERE     LOWER(CLMN.TABLE_NAME) = LOWER(:tablename)
+                                     AND CLMN.OWNER = :tableowner
+                             ORDER BY CLMN.COLUMN_ID
                           '''
                 result = session.execute(sqlText,tablename  = selection, 
                                                  tableowner = object_type[1])
@@ -454,6 +497,36 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
                 session.PutOutputText('DDL :: \n')
                 session.PutOutputText(session.GetObjectDDL(selection, 'INDEX', object_type[1]))
                 
+            elif object_type[0] in ['CONSTRAINT','REF_CONSTRAINT']:
+                session.PutOutputText('DESCRIPTION :: \n')
+                sqlText = ''' SELECT CONSTRAINTS.CONSTRAINT_NAME   "Constraint Name",
+                                     CONSTRAINTS.TABLE_NAME        "Table Name",
+                                     CONS_COLUMNS.COLUMN_NAME      "Column Name",
+                                     CONSTRAINTS.CONSTRAINT_TYPE   "Constraint Type",
+                                     CONSTRAINTS.SEARCH_CONDITION  "Search Condition",
+                                     CONSTRAINTS.R_CONSTRAINT_NAME "Ref. Constraint Name",
+                                     CONSTRAINTS.STATUS            "Status",
+                                     CONSTRAINTS.DELETE_RULE       "Delete Rule",
+                                     CONSTRAINTS.DEFERRABLE        "Deferrable",
+                                     CONSTRAINTS.DEFERRED          "Deferred",
+                                     CONSTRAINTS.VALIDATED         "Validated",
+                                     CONSTRAINTS.BAD               "Bad",
+                                     CONSTRAINTS.RELY              "Rely"
+                                FROM ALL_CONSTRAINTS CONSTRAINTS, ALL_CONS_COLUMNS CONS_COLUMNS
+                               WHERE     LOWER(CONSTRAINTS.CONSTRAINT_NAME) = LOWER(:constrname)
+                                     AND CONSTRAINTS.CONSTRAINT_NAME = CONS_COLUMNS.CONSTRAINT_NAME
+                                     AND CONSTRAINTS.OWNER = CONS_COLUMNS.OWNER
+                                     AND CONSTRAINTS.OWNER = :constrowner
+                              ORDER BY CONS_COLUMNS.POSITION
+                          '''
+                result = session.execute(sqlText,constrname  = selection,
+                                                 constrowner = object_type[1])
+                
+                session.PutOutputText(session.GetSqlResultAsText(result))
+                session.PutOutputText('DDL :: \n')
+                session.PutOutputText(session.GetObjectDDL(selection, object_type[0], object_type[1]))
+                if session.HasError():
+                    session.ShowError()
             else:
                 session.PutOutputText('DESCRIPTION :: \n')
                 session.PutOutputText(session.GetObjectDescr(selection, object_type[0], object_type[1]))
@@ -564,3 +637,28 @@ class OracleDevToolsSettingsCommand(sublime_plugin.TextCommand):
             return
         else:
             self.view.replace(self.edit, self.view.sel()[0], self.foundedObjects[index][0])
+
+    def session_menu_choice(self, index):
+        if index == -1:
+            return
+        
+        menu = self.sessionMenu
+        
+        if menu[index] == 'Reconnect':
+            session.Reconnect()
+        
+        elif menu[index] == 'Disconnect':
+            session.Disconnect()
+        
+        elif menu[index] == 'Connections':
+            self.connections = session.GetConnectionsList()
+            self.view.window().show_quick_panel(self.connections, self.connection_choice)
+
+        elif menu[index] == 'Show current connection string':
+            session.ShowCurrentConnection()
+
+    def connection_choice(self, index):
+        if index == -1:
+            return
+        
+        session.Reconnect(self.connections[index][0])

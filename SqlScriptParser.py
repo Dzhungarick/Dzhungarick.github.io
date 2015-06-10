@@ -413,8 +413,9 @@ class ScriptParser:
                 string += self.__currentLexem['Lexem']
 
                 if not self.__GetNextLexem():
-                    self.__SetError(3,'unexpected end of block')
-                    return
+                    #self.__SetError(3,'unexpected end of block')
+                    #return
+                    break
                 
                 if not self.__IsApostropheLexem():
                     self.__GetLastLexem()
@@ -820,7 +821,6 @@ class ScriptParser:
         self.__SplitStatements()
 
         self.__GetStatements()
-
         '''
         #print(self.__GetLexemsAsTextTable())
         if not self.__splitStatementError['ErrorCode'] == 0:
