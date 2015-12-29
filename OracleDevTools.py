@@ -115,7 +115,7 @@ def RunScript():
     session.PutOutputText('START::' + time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(begin_time)) + '\n')
     
     if session.HasError():
-        if MakeErrorStop(session.sessionError, statement['Statement Text']):
+        if MakeErrorStop(session.sessionError.decode(session.encoding), statement['Statement Text']):
             sublimeVE.stopDelay = True
     else:
         if result:

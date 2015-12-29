@@ -189,7 +189,7 @@ class OracleSession:
             self.currentConnection.cursor().callproc("dbms_output.get_line", (lineVar, statusVar))
             if statusVar.getvalue() != 0:
                 break
-            output += lineVar.getvalue() + "\n"
+            output += lineVar.getvalue().decode(self.encoding) + "\n"
         return output
 
     def cursor(self):
@@ -405,6 +405,7 @@ class OracleSession:
                             # Добавляем строки
                             while len(rows) <= rowIndex:
                                 rows.append(getEmptyRow(len(row)))
+    
                             rows[rowIndex][columnIndex] = string.decode(self.encoding)
                 # NULL
                 elif value is None: 
@@ -428,7 +429,7 @@ class OracleSession:
                 self.oracleSessionError = str(e).decode(self.encoding)
                 return ''
 
-            for indexRow, row in enumerate(result):
+            for row in result:
                 rows = processRow(row)
 
                 for processedRow in rows:
@@ -436,7 +437,7 @@ class OracleSession:
 
             columnNamesA = []
             for description in cursor.description:
-                columnNamesA.append(description[0])
+                columnNamesA.append(description[0].decode(self.encoding))
 
             # Определяем ширину каждого столбца
             lenValueA = [0]*len(columnNamesA)
@@ -457,7 +458,7 @@ class OracleSession:
             outText = '|' + '='*(rowLen-2) + '|'    + '\n' + \
                       rowFormat%tuple(columnNamesA) + '\n' + \
                       '|' + '-'*(rowLen-2) + '|'    + '\n'
-                    
+
             for row in tableStringA:
                 outText += rowFormat%tuple(row) + '\n'
                     
